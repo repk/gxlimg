@@ -1,0 +1,999 @@
+#include <stdlib.h>
+#include <stdio.h>
+
+enum bl2sig_optid {
+	B2S_INPUT, /* 0x0 */
+	B2S_AMLUSERKEY, /* 0x8 */
+	B2S_USERKEY, /* 0x10 */
+	B2S_KEYMAX, /* 0x18 */
+	B2S_AESKEY, /* 0x20 */
+	B2S_OUTPUT, /* 0x28 */
+	B2S_EFUSE, /* 0x30 */
+	B2S_SKIPSECTOR, /* 0x38 */
+	B2S_LEVEL, /* 0x40 */
+	B2S_NR,
+};
+
+static int aml_bl2_sig_file(char *argval[])
+{
+	/* argval = -0x2898 */
+	int i;
+	int ret; /* -0x2880 */
+	int skip; /* -0x2878 */
+	int rsakey_sz; /* -0x287c */
+	uint64_t unknow1 = 0; /* -0x2874 */
+	int usekey; /* -0x2870 */
+	int rdbufsz; /* -0x286c */
+	int newsz; /* -0x2868 */
+	int useless; /* -0x2864 */
+	FILE *fin = NULL; /* -0x2860 */
+	FILE *fout = NULL; /* -0x2858 */
+	FILE *fkey = NULL; /* -0x2850 */
+	/* WWWWWW NULL */
+	char *outdata_ptr = NULL; /* -0x2848 */
+	char *outdata = NULL; /* -0x2840 */
+	char *rdbuf; /* -0x2838 */
+	char * rsa_sig_data = 0; /* -0x2830 */
+	char * payload_data = 0; /* -0x2828 */
+	char *wtfptr; /* 0x2820 */
+	char *wtfbuf; /* 0x2818 */
+	uint8_t *magic; /* -0x2810 */
+	uint8_t *rsakey_data; /* -0x2808 */
+	uint8_t *chk1; /* -0x2800 */
+	uint8_t *chk3; /* -0x27f8 */
+	uint8_t *chk2; /* -0x27f0 */
+	uint8_t *chk4; /* -0x27e8 */
+	rsa_context ctx; /* -0x27e0 -> ~~~~~-0x26c4 */
+	char rsakey_hdr[0x30]; /* -0x26c0 -> 0x2690 */
+	char *hdr[0x40]; /* -0x2690 -> 0x2650 */
+	struct sha2_context shactx; /* 0x2650 */
+	char rand[16]; /* -0x2560 -> 0x2550 */
+	char discard[0x20]; /* 0x2550 -> 0x2530 Is it rsa private ??? */
+	char rsahash[0x20]; /* 0x2530 -> 0x2510 */
+	char pathout[0x100]; /* -0x2510 -> -0x2410 */
+	char uselessbuf[0x400]; /* -0x2410 -> 0x2010 */
+	char rsakey_buf[0x2000]; /* -0x2010 -> 0x10 */
+
+	ret = 0x2d73;
+
+	usekey = 0;
+	if((argval[B2S_AMLUSERKEY] != NULL) ||
+			((argval[B2S_USERKEY] != NULL) && (argval[B2S_KEYMAX] != NULL)))
+		usekey = 1;
+	rsakey_sz = 0;
+	rdbufsz = 0;
+
+	wtfbuf = malloc(0xc000);
+	wtfptr = wtfbuf;
+
+	if(argval[B2S_INPUT] == NULL)
+		goto out;
+
+	skip = 0;
+	if(argval[B2S_SKIPSECTOR] != NULL)
+		skip = strtoul(argval[B2S_SKIPSECTOR], NULL, 16);
+	if(skip > 4)
+		skip = 4;
+
+	ret = 0x2d95;
+	if(usekey && skip)
+		goto out;
+
+	bzero(pathout, 0x100);
+	bzero(wtfbuf, 0xc000);
+
+	if(argval[B2S_OUTPUT]) {
+		(.plt)(pathout, argval[B2S_OUTPUT]); /* strcpy ??? */
+	} else {
+		sprintf(pathout, "%s%s", argval[B2S_INPUT],
+				(usekey) ? ".encrypt" : ".pkg");
+	}
+
+	fin = fopen(argval[B2S_INPUT], "rb");
+	remove(pathout);
+	fout = fopen(pathout, "wb+");
+
+	ret = 0x2db5;
+	rdbufsz = 0xb000;
+	rdbuf = malloc(rdbufsz); /* TODO tmp is inited ??? */
+
+	if(fin == NULL || fout = NULL || rdbuf == NULL)
+		goto out;
+
+	for(i = 0; i < 16; ++i)
+		rand[i] = rand();
+
+	if(usekey) {
+		if(argval[B2S_AMLUSERKEY]) {
+			ret = 0x2dc9;
+			fkey = fopen(argval[B2S_AMLUSERKEY], "rb");
+			if(!fkey)
+				goto out;
+			fseek(fkey, 0, SEEK_END);
+			ret = 0x2dd3;
+			if(ftell(fkey) != 0x1b40)
+				goto out;
+			fseek(fkey, 0x1b20, SEEK_SET);
+			fread(discard, 1, 0x20, fkey);
+			fseek(fkey, 0x1248, SEEK_SET);
+		} else if(argval[B2S_KEYMAX] != NULL) {
+			ret = 0x2de5;
+			fkey = fopen(argval[B2S_KEYMAX], "rb");
+			if(!fkey)
+				goto out;
+			fseek(fkey, 0, SEEK_END);
+			ret = 0x2ded;
+			if(ftell(fkey) != 0x8d8)
+				goto out;
+			fseek(fkey, 0, SEEK_SET);
+		} else {
+			printf("aml log: error %d\n", 0x2df6);
+		}
+		ret = 0x2dfa;
+	}
+
+	bzero(hdr, 0x40);
+	*(uint32_t *)(hdr) = "@AML";
+	hdr[10] = 1;
+	hdr[11] = 1;
+	hdr[8] = 0x40; /* <----- HDR SIZE (uint8_t) ---- */
+	*(uint32_t *)(hdr + 4) = 0x40; /* <------ Total SIZE (uint32_t) */
+
+	err = 0x2e0a;
+	/* Copy rand + usekey if any in file */
+	if(usekey && fkey) {
+		bzero(rdbuf, rdbufsz);
+		fread(rdbuf, 1, 0x8d8, fkey);
+		memcpy(rdbuf, rand, 16);
+		fwrite(rdbuf, 1, 0x8d8, fout);
+		memcpy(wtfptr, rdbuf, 0x8d8);
+		wtfptr += 0x8d8;
+		fclose(fkey);
+		fkey = NULL;
+		if((rdbuf[0x6b0] != 0x40) && (rdbuf[0x6b0] != 0x80) &&
+				(rdbuf[0x6b0] != 0x20)) {
+			ret = 0x2e22;
+			goto out;
+		}
+	} else {
+		bzero(rdbuf, rdbufsz);
+		memcpy(rdbuf, rand, 16);
+		fwrite(rdbuf, 1, 16, fout);
+		memcpy(wtfptr, rdbuf, 16);
+		wtfptr += 16
+	}
+
+	bzero(rdbuf, rdbufsz);
+	fread(rdbuf, 1, rdbufsz, fin);
+
+	/* Skip 4096 HEADER ??? */
+	magic = rdbuf + 16;
+	if((*(uint32_t *)magic == "@AML") && (*(uint32_t *)magic[4] ==
+				*(uint32_t *)magic[0x2c] + *(uint32_t *)magic[0x1c])) {
+		fseek(fin, 0x1000, SEEK_SET);
+		fread(rdbuf, 1, rdbufsz, fin);
+	}
+	fclose(fin);
+
+	bzero(rsahash, 0x20);
+	bzero(uselessbuf, 0x400);
+
+	rsa_init(&ctx, 0, 0);
+	bzero(rsakey_buf, 0x2000);
+
+	if(usekey) {
+		if(aml_gx_load_rsa_key_file(&ctx, (argval[B2S_AMLUSERKEY] ?
+					argval[B2S_AMLUSERKEY] : argval[B2S_USERKEY])) != 0)
+			goto out;
+		bzero(rsakey_hdr, 0x30);
+		*(uint32_t *)rsakey_hdr = "@KEY";
+		rsakey_hdr[8] = 1;
+		rsakey_hdr[10] = 0x30;
+		rsakey_hdr[4] = 0x30;
+		newsz = hdr[8] + 0x230;
+		rsakey_data = &rsakey_buf;
+		useless = 0;
+		rsakey_sz = aml_create_key_from_file_x(0, (argval[B2S_AMLUSERKEY] ? argval[B2S_AMLUSERKEY] : argval[B2S_USERKEY]), rsakey_data, rsakey_hdr, newsz);
+		bzero(rsakey_buf + rsakey_sz, 0xf);
+		rsakey_sz = (rsakey_sz + 0xf) & 0xfffffff0; /* ROUND UP to 16 */
+		if(rsakey_sz != 0x4b8) {
+			bzero(rsakey_buf + rsakey_sz, rsakey_sz - 0x4b8);
+			rsakey_sz = 0x4b8;
+		}
+		*(uint32_t *)(hdr + 16) = 0x1; /* RSA KEY */
+		*(uint32_t *)(hdr +0x20) = rsakey_hdr[9]; /* KEY TYPE ???? */
+		*(uint32_t *)(hdr +0x28) = rsakey_sz + 0x30;
+	} else {
+		if(skip != 0)
+			ctx.DP = skip * 512 - 0x50;
+		else
+			ctx.DP = 0x20;
+		*(uint32_t *)(hdr + 16) = 0x0; /* NO RSA KEY */
+		*(uint32_t *)(hdr + 20) = 0x0; /* NO RSA KEY */
+		rsakey_sz = 0xd80;
+		*(uint32_t *)(hdr + 0x28) = rsakey_sz + 0x30;
+	}
+
+/* TODO HDR MAGIC */
+	*(uint64_t *)(hdr + 0x18) = 0x200; /* IS IT VERSION OR HEADER SIZE */
+	*(uint32_t *)(hdr + 0x14) = hdr[8];
+	*(uint32_t *)(hdr + 4) = *(uint32_t *)(hdr + 4) + *(uint64_t *)(hdr + 0x18);
+	*(uint32_t *)(hdr + 0x1c) = *(uint32_t *)(hdr + 0x14) + ctx.DP;
+	*(uint32_t *)(hdr + 0x24) = *(uint32_t *)(hdr + 0x14) + 0x200;
+	*(uint32_t *)(hdr + 4) = *(uint32_t *)(hdr + 4) + *(uint64_t *)(hdr + 0x24);
+	*(uint32_t *)(hdr + 0x38) = rdbufsz;
+	*(uint32_t *)(hdr + 0x34) = *(uint32_t *)(hdr + 0x28) + *(uint32_t *)(hdr + 0x24);
+	*(uint32_t *)(hdr + 4) = *(uint32_t *)(hdr + 4) + *(uint64_t *)(hdr + 0x38);
+	*(uint32_t *)(hdr + 0x2c) = *(uint32_t *)(hdr + 4) - *(uint32_t *)(hdr + 0x1c);
+
+	outdata_ptr = malloc(*(uint32_t *)(hdr + 4));
+	if(outdata_ptr == NULL)
+		goto out;
+	bzero(outdata_ptr, *(uint32_t *)(hdr + 4));
+	outdata = outdata_ptr;
+	rsa_sig_data = 0;
+	memcpy(outdata_ptr, hdr, 0x40);
+	outdata_ptr += 0x40;
+	rsa_sig_data = outdata_ptr;
+	outdata_ptr += *(uint32_t *)(hdr + 0x18);
+	payload_data = rsa_sig_data + ctx.DP;
+
+	if(usekey) {
+		memcpy(outdata_ptr, rsakey_hdr, 0x30);
+		outdata_ptr += 0x30;
+		memcpy(outdata_ptr, rsakey_buf, rsakey_sz);
+		outdata_ptr += rsakey_sz;
+	} else {
+		outdata_ptr += 0x30;
+		outdata_ptr += rsakey_sz;
+	}
+
+	memcpy(outdata_ptr, rdbuf, rdbufsz);
+	outdata_ptr += rdbufsz;
+
+	if(*(uint32_t *)(hdr + 4) + outdata != outdata_ptr) {
+		puts("aml log : internal error!");
+		while(1); /* LOOOOOOOL */
+	}
+
+	chk1 = outdata + 0x24;
+	chk3 = outdata_ptr + 0x258;
+	chk2 = outdata_ptr + 0x8ec;
+	chk4 = outdata_ptr + 0xb20;
+
+	if(usekey) {
+		/* Consistency check */
+		if(*chk1 != 0x240) {
+			puts("aml log : sig fail! Ln=%d ch1=0x%x\n",
+					0x2ed6, *chk1);
+			goto out;
+		}
+		if(*chk3 != 0x298) {
+			puts("aml log : sig fail! Ln=%d chk3=0x%x chk4 = 0x%x\n",
+				0x2edc, *chk3, *chk4);
+		}
+	} else {
+		*(uint32_t *)chk1 = 0x240;
+		*(uint32_t *)chk3 = 0x298;
+		*(uint32_t *)chk2 = 0x240;
+		*(uint32_t *)chk4 = 0x298;
+	}
+
+	sha2_start(&shactx, 0);
+	sha2_update(&shactx, outdata, hdr[8] /*HDR sz (0x40) */);
+	sha2_update(&shactx, payload_data, *(uint32_t *)(hdr + 0x2c) /* payload len */);
+	sha2_finish(&shactx, rsahash);
+
+	if(usekey) {
+		/* 
+		 * 1 = 
+		 * 0xb = POLARSSL_MD_*
+		 * 0x20 = hashlen
+		 */
+		ret = rsa_pkcs1_sign(&ctx, 0, 0, 1, 0xb, 0x20, rsahash, rsa_sig_data);
+		if(ret != 0) {
+			ret = 0x2f00;
+			goto out;
+		}
+	} else {
+		memcpy(rsa_sig_data, rsahash, 0x20);
+	}
+
+	fwrite(outdata, 1, *(uint32_t *)(hdr + 4), fout);
+	ret = 0;
+
+out:
+	if(fin)
+		fclose(fin);
+	if(fkey)
+		fclose(fkey);
+	if(fout)
+		fclose(fout);
+	if(rdbuf)
+		free(rdbuf);
+	if(outdata)
+		free(outdata);
+	if(wtfbuf)
+		free(wtfbuf);
+	return ret;
+}
+
+static int aml_bl2_sig(int argc, char *argv[])
+{
+	/* argv = -0x550 */
+	/* argc = -0x544 */
+	int optidx; /* -0x53c */
+	int ret; /* -0x538 */
+	int optret; /* -0x534 */
+	void *argval[10]; /* -0x530 -> -0x4e0 */
+	struct stat st; /* -0x4e0 */
+	struct option opt[] = { /* -0x450 -> -0x310 */
+		{
+		        .name = "input",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '0',
+		},
+		{
+		        .name = "amluserkey",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '1',
+		},
+		{
+		        .name = "userkey",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '2',
+		},
+		{
+		        .name = "keymax",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '3',
+		},
+		{
+		        .name = "aeskey",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '4',
+		},
+		{
+		        .name = "output",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '5',
+		},
+		{
+		        .name = "efuse",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '6',
+		},
+		{
+		        .name = "skipsector",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '7',
+		},
+		{
+		        .name = "level",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '8',
+		},
+		{},
+	};
+	char buf1[0x100]; /* -0x310 -> -0x210 */
+	char buf2[0x100]; /* -0x210 -> -0x110 */
+	char pathout[/*sz ?*/]; /* -0x110 */
+
+	ret = 0x2f93;
+
+	if(argc < 4)
+		goto out;
+
+	bzero(argval, sizeof(argval));
+
+	while((optret = getopt_long(argc, argv, "", opt, &optidx)) != -1)
+		argval[optidx] = optarg;
+
+	ret = 0x2fa7;
+	if((argval[B2S_AMLUSERKEY] != NULL) && argc < 5)
+		goto out;
+
+	/* Is it v3 level ??? */
+	if((argval[B2S_LEVEL] != 0) &&
+			((.plt + 0x70)(argval[B2S_LEVEL], "v3") == 0)) { /* strcmp ?? */
+		ret = amvl_bl2_sig_file_v3(argval[B2S_INPUT]);
+		goto out;
+	}
+
+	for(optidx = 0; optidx < 10; ++optidx) {
+		if(argval[optidx] == NULL)
+			continue
+		if(optidx > B2S_KEYMAX)
+			continue;
+		if(stat(argval[optidx], &st) == 0)
+			continue;
+
+		printf("aml log: error! Illegal [%s] %s\n", opt[optidx].name,
+				argval[optidx]);
+		goto out;
+	}
+
+	if(argval[B2S_INPUT] == NULL) {
+		puts("aml log: error! Please set input first!");
+		goto out;
+	}
+
+	bzero(buf1, 0x100);
+	bzero(buf2, 0x100);
+
+	if(argval[B2S_OUTPUT] == NULL) {
+		sprintf(pathout, "%s.sig", argval[B2S_OUTPUT]);
+		argval[B2S_OUTPUT] = pathout;
+	}
+
+	ret = aml_bl2_sig_file(argval);
+out:
+	return ret;
+}
+
+enum optid {
+	OI_INPUT, /* 0x0 */
+	OI_AESKEY, /* 0x8 */
+	OI_OUTPUT, /* 0x10 */
+	OI_UCLCOMPACT, /* 0x18 */
+	OI_COMPRESS, /* 0x20 */
+	OI_NR,
+};
+
+struct aml_ctrl_blk {
+	uint32_t magic1;
+....
+};
+
+enum cipher {
+	C_AES,
+	C_RSA,
+};
+
+static int aml_file_boom(char const *path, uint32_t filesz, char fill)
+{
+	/* fill = 0xd0 */
+	/* filesz == -0xcc */
+	/* path == -0xc8 */
+	int ret; /* -0xbc */
+	int boomsz; /* -0xb8 */
+	int sz; /* -0xb4 */
+	FILE *fd; /* -0xb0 */
+	char *buf; /* -0xa8 */
+	struct stat st;
+
+	ret = 0x4b9;
+	unknow = 0;
+
+	buf = malloc(0x400);
+	if(path == NULL)
+		goto out;
+
+	ret = 0x4c2;
+	if(stat(path, &st) != 0)
+		goto out;
+
+	ret = 0x4c7;
+	fd = fopen(path, "rb+");
+	if(fd == NULL)
+		goto out;
+
+	sz = 0;
+	fseek(fd, 0, SEEK_END);
+	sz = ftell(fd);
+
+	ret = 0x4d3;
+	boomsz = filesz - sz;
+	if(boomsz < 0)
+		goto out;
+
+	(.plt + 0x60)(buf, fill, 0x400);  /* memset ??? */
+	while(boomsz > 0) {
+		if(boomsz >= 0x400) {
+			fwrite(buf, 1, 0x400, fd);
+			boomsz -= 0x400;
+		} else {
+			fwrite(buf, 1, boomsz, fd);
+			boomsz = 0;
+		}
+	}
+	ret = 0;
+out:
+	if(buf)
+		free(buf);
+	if(fd)
+		fclose(fd);
+
+	return ret;
+}
+
+static void aml_set_blk_time_stamp(enum cipher cipher, char *blk)
+{
+	/* blk == -0x90 */
+	/* cipher == -0x84 */
+	uint32_t ret = 0x389; /* -0x7c */
+	struct tm *localt; /* 0x78 */
+	time_t t; /* -0x70 */
+	char *cipher_desc[] = { /* -0x30 */
+		[C_AES] = "AES-CBC",
+		[C_RSA] = "RSA-SIG",
+	};
+	char *ptr[] = { /* -0x20 */
+		&blk[0x88],
+		&blk[0xb0],
+	};
+
+	if(blk == NULL)
+		goto out;
+
+	if(cipher > 1)
+		goto out;
+
+	time(&t);
+	localt = localtime(&t);
+
+	sprintf(ptr[cipher], "%s%04d/%02d/%02d %02d:%02d:%02d",
+			cipher_desc[cipher], tm->tm_year + 1900,
+			tm->tm_mon + 1, tm->tm_hour,
+			tm->tm_min, tm->tm_sec);
+
+	ret = 0;
+out:
+	return ret;
+}
+
+static int aml_file_aes(FILE *file, int filesz, char key[0x30], char enc)
+{
+	/* key -0x1a8 */
+	/* enc -0x1a0 */
+	/* filesz -0x19c */
+	/* file -0x198 */
+	int ret; /* -0x184 */
+	int curend; /* -0x180 */
+	long cur; /* -0x17c */
+	int fsz; /* -0x178 */
+	int i; /* -0x174 */
+	void *buf = NULL; /* -0x170 */
+	char *iv = _key + 0x20; /* -0x168 */
+	aes_context ctx; /* -0x160 */
+	char _key[0x30]; /* -0x40 TODO sz */
+
+	ret = 0x3c0;
+	if(file == NULL)
+		goto out;
+
+	if(key == NULL)
+		goto out;
+
+	cur = ftell(file);
+	fsz = filesz;
+	fseek(file, 0, SEEK_END);
+	curend = ftell(file);
+	fseek(file, cur, SEEK_SET);
+	curend = curend - cur;
+	ret = 0x3d4;
+	if(curend < fsz)
+		goto out;
+
+	curend = fsz;
+	if(curend & 0xf)
+		goto out;
+
+	buf = malloc(0x400);
+	if(buf == NULL)
+		goto out;
+
+	memcpy(_key, key, 0x30);
+	if(enc == 1)
+		aes_setkey_enc(&ctx, _key, 256);
+	else
+		aes_setkey_dec(&ctx, _key, 256);
+
+	i = 0
+	while(curend) {
+		i = fread(buf, 1, (curend < 0x400) ? curend : 0x400, file)
+		if(i == 0)
+			break;
+		curend -= i;
+		aes_crypt_cbc(ctx, enc, i, iv, buf, buf);
+		fseek(file, -i, SEEK_CUR); /* rewind current block */
+		fwrite(buf, i, 1, file);
+	}
+
+	fflush(file);
+	fseek(file, cur, SEEK_SET);
+	ret = 0;
+out:
+	if(buf) {
+		free(buf);
+		buf = NULL;
+	}
+	return ret;
+}
+
+static int aml_ctrl_blk_check(char const *buf)
+{
+}
+
+static int aml_bl3_enc_file(argval[OI_NR + 1]) /* argval is at -0xc58 */
+{
+	char lz4[0x400]; /* -0x410 */
+	char pathlz4[0x100]; /* 0x510 */
+	char pathout[0x100]; /* -0x610 */
+	char rd[0x30]; /* -0x640 rsakey + iv */
+	char firstblk[0x200] /* 0x840 */
+	/* END OF buf <- 0x840 */
+	char buf[0x200]; /* -0xa40 */
+	struct stat st2; /* -0xad0 */
+	struct stat st; /* -0xb60 */
+	struct aml_ctrl_blk cblk; /* -0xbb0 uint64_t[10] */
+	char *lz4data; /* 0xbf8 */
+	time t; /* 0xbf0 */
+	FILE *lz4out; /*0xc00*/
+	FILE *lz4file; /*0xc08*/
+	char *filedata; /*0xc10*/
+	struct tm *tm; /*0xc18 */
+	FILE *fout; /* 0xc20 */
+	FILE *file; /* -0xc28 */
+	uint32_t lz4sz; /* -0xc2c */
+	uint32_t lz4maxsz; /* -0xc30 */
+	size_t filesz; /* -0xc38 */
+	int i; /* -0xc40 */
+	int ret = 0x16e0; /* -0xc44 */
+	size_t offset; /* -0xc3c */
+
+	if(argval[OI_INPUT] == NULL)
+		goto out;
+
+	if(stat(argval[OI_INPUT], &st) != 0)
+		goto out;
+
+	ret = 0x16e6;
+
+	file = fopen(argval[OI_INPUT], "rb");
+	if(file == NULL)
+		goto out;
+
+	ret = 0x16eb;
+	bzero(buf, 0x200);
+	fread(buf, 1, 512, file);
+
+	ret = aml_ctrl_blk_check(buf);
+	fclose(file);
+	file = NULL;
+	if(ret == 0)
+		goto out;
+
+	memcpy(&cblk, buf, 80);
+	offset = 0;
+	if(cblk.magic1 == 0x12348765)
+		offset = 0x200;
+
+	bzero(rd, 0x30);
+	for(i = 0; i < 0x30; ++i)
+		rd[i] = (char)rand();
+
+	if(argval[OI_AESKEY] != NULL) {
+		/* fetch key .... */
+		fseek(); /* TODO */
+		file = fopen(argval[OI_AESKEY], "rb");
+		if(file == NULL)
+			goto out;
+		fread(rd, 1, 0x30, file);
+		fclose(file);
+		file = NULL;
+	}
+
+	filesz = 0;
+	bzero(pathout, 0x100);
+
+	if(argval[OI_OUTPUT] != NULL)
+		.plt(pathout, argval[OI_OUTPUT]); /* strcpy ??? */
+	else
+		sprintf(pathout, "%s.enc", argval[OI_INTPU]);
+
+	ret = 0x1739;
+	fout = fopen(pathout, "wb");
+	if(fout == NULL)
+		goto out;
+
+	ret = 0x173e;
+	file = fopen(argval[OI_INPUT], "rb");
+	if(file == NULL) {
+		fclose(fout);
+		goto out;
+	}
+
+	fseek(file, 0x0, SEEK_END);
+	filesz = ftell(file);
+	filesz -= offset;
+	fseek(file, offset, SEEK_SET);
+
+	ret = aml_file_copy(file, fout, filesz);
+	fclose(file);
+	fclose(fout);
+	file = NULL;
+	fout = NULL;
+
+	if(argval[OI_COMPRESS] != NULL) {
+		/* TODO */
+		if((.plt + 0x70)(argval[OI_COMPRESS], "lz4") == 0) {/* strcmp ?? */
+			bzero(lz4, 0x400);
+			bzero(pathlz4, 0x100);
+			sprintf(pathlz4, "%s.lz4", pathout);
+			bzero(firstblk, 0x80);
+			*(uint32_t *)(firstblk + 92) = "LZ4C";
+			*(uint32_t *)(firstblk) = "LZ4C";
+			*(uint32_t *)(firstblk + 6) = 0x80; /* Hdr size ? */
+			for(i = 0; i < 10; ++i)
+				firstblk[80 + i] = rand();
+			time(&t);
+			tm = localtime(&t);
+			sprintf(firstblk + 0x30, "%04d%02d%02d%02d:%02d:%02d",
+				tm->tm_year + 1900, tm->tm_mon + 1,
+				tm->tm_mday, tm->tm_hour, tm->tm_min,
+				tm->tm_tm_sec);
+			if(stat(pathout, &st2) == 0) {
+				aml_file_sha2(pathout, firstblk + 0x10);
+				filedata = malloc(st2.fsz);
+				if(filedata) {
+					lz4file = fopen(pathout, "rb");
+					if(lz4file == NULL)
+						goto out;
+					fread(filedata, 1, st2.fsz, lz4file);
+					lz4out = fopen(lz4path, "wb");
+					if(lz4out != NULL) {
+						lz4maxsz = st2.fsz + 0x400;
+						lz4data = malloc(lz4maxsz);
+						if(lz4data) {
+							bzero(lz4data, lz4maxsz);
+							*(uint32_t *)(firstblk + 8) = st2.fsz;
+							lz4sz = Lz4_compress_HC(filedata, lz4data, st2.fsz, lz4maxsz, 12);
+							*(uint32_t *)(firstblk + 10) = lz4sz;
+							sha2(firstblk, 0x60, firstblk + 0x60, 0)
+							fwrite(firstblk, 1, 0x80, lz4out);
+							fwrite(lz4data, 1, lz4sz, lz4out);
+							fclose(lz4out);
+							lz4out = NULL;
+						}
+						fclose(lz4out);
+						lz4out = NULL;
+					}
+					free(filedata);
+					filedata = NULL;
+					if(stat(pathlz4, &st2) == 0) {
+						filesz = st2.filesz
+						aml_file_duplicate(pathlz4, pathout, 0);
+						remove(pathlz4);
+					}
+				}
+			}
+		}
+	}
+
+	if(ret != 0)
+		goto out;
+
+	/* If file is not 512 byte align, pad it */
+	if(filesz & 0x1ff) {
+		/* Not aligned on 512 */
+		filesz = (filesz + 0x1ff) & ~0x1ff; /* Roundup */
+		if(aml_file_boom(pathout, filesz, 0) != 0) {
+			ret = 0x1802;
+			remove(pathout);
+			goto out;
+		}
+	}
+
+	file = fopen(pathout, "rb+");
+	ret = 0x180a;
+
+	/* Prepare header */
+	bzero(buf, 0x200);
+	*(uint16_t *)(blk + 2) = 0x200;
+	*(uint16_t *)(blk + 250) = 0x200;
+	*(uint16_t *)(blk + 4) = 1; /* AES Encrypted */
+	*(uint16_t *)(blk + 8) = 1;
+	*(uint32_t *)(blk + 12) = (uint32_t)"AMLC";
+	*(uint32_t *)(blk + 252) = (uint32_t)"AMLC";
+	*(uint32_t *)(blk + 16) = filesz;
+	*(uint32_t *)(blk + 20) = 0x200;
+	*(uint32_t *)(blk + 24) = filesz; /* Extracted size ? */
+	*(uint32_t *)(blk + 28) = filesz; /* AES cipher size ?? */
+	/* XXX End of offset */
+	if(offset != 0)
+		memcpy(blk + 256, cblk, sizeof(clbk));
+	memcpy(blk + 64, rd, sizeof(rd));
+
+	fseek(file, 0x0, SEEK_SET);
+
+	if(*(blk + 4)) { /* AES crypt */
+		ret = aml_file_aes(file, filesz, rd, 1);
+		if(ret != 0)
+			goto out;
+	} else {
+		*(uint32_t *)(blk + 28) = 0;
+	}
+
+	aml_set_blk_time_stamp(C_AES, blk);
+	fseek(file, 0x0, SEEK_SET);
+
+	ret = aml_file_sha2(file, buf + 0x20, filesz);
+	if(ret != 0)
+		goto out;
+
+
+	/* Put first block to the end and write header */
+	fseek(file, 0, SEEK_SET);
+	fread(firstblk, 1, 0x200, file);
+	fseek(file, 0, SEEK_SET);
+	fwrite(buf, 1, 0x200, file);
+	fseek(file, 0, SEEK_END);
+	fwrite(firstblk, 1, 0x200, file);
+	ret = 0;
+out:
+	if(file != NULL)
+		fclose(file);
+	return ret;
+}
+
+static int aml_bl3_enc(int argc, char **argv)
+{
+	struct option opt[] = {
+		{
+		        .name = "input",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '0',
+		},
+		{
+		        .name = "aeskey",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '1',
+		},
+		{
+		        .name = "output",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '2',
+		},
+		{
+		        .name = "uclcompact",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '3',
+		},
+		{
+		        .name = "compress",
+		        .has_arg = 1,
+		        .flag = NULL
+		        .val = '4',
+		},
+		{},
+
+	};
+	char const *argvalue[OI_NR + 1] = {};
+	int optidx;
+	int ret = 0x2ffa;
+
+	while(getopt_long(argc, argv, "", opt, &optidx) != -1)
+		argvalue[optidx] = optarg;
+
+	ret = aml_bl3_enc_file(argvalue);
+	return ret;
+}
+
+int main(int argc, char **argv)
+{
+	/* argv == -0x500 */
+	/* argc == -0x4f4 */
+	int optidx = -1; /* -0x4f0 */
+	int ret = 0; /* -0x4ec */
+	time_t t; /* -0x4e8 */
+	int (*action)(int argc, char **argv)[] = { /* -0x4e0 -> -0x3f0 */
+		aml_sig_check,
+		aml_rsa_check,
+		aml_rsa_gen,
+		aml_key_sig,
+		aml_key_bnd,
+		aml_key_sig_v3,
+		aml_key_bnd_v3,
+		aml_bin_sig,
+		aml_boot_sig,
+		aml_boot_sig_v3,
+		aml_img_sig,
+		aml_mk_sd,
+		aml_sha,
+		aml_upgrade_sig,
+		aml_mk_password,
+		aml_mk_customer_id,
+		aml_bl2_sig,
+		aml_bl2_enc,
+		aml_bl2_sig_v3,
+		aml_bl2_enc,
+		aml_bl3_enc,
+		aml_bl3_sig,
+		aml_bl3_sig_v3,
+		aml_boot_make,
+		aml_boot_make_v3,
+		aml_efuse_gen,
+		aml_efuse_gen_v3,
+		aml_bin2hex,
+		aml_efuse_process,
+		aml_show_help,
+	};
+	struct option opt[] = { /* -0x3f0 */
+		{ .name = "sigchk", }, /* aml_sig_check */
+		{ .name = "rsacheck", }, /* aml_rsa_check */
+		{ .name = "rsagen", }, /* aml_rsa_gen */
+		{ .name = "keysig", }, /* aml_key_sig */
+		{ .name = "keybnd", }, /* aml_key_bnd */
+		{ .name = "keysig3", }, /* aml_key_sig_v3 */
+		{ .name = "keybnd3", }, /* aml_key_bnd_v3 */
+		{ .name = "binsig", }, /* aml_bin_sig */
+		{ .name = "bootsig", }, /* aml_boot_sig */
+		{ .name = "bootsig3", }, /* aml_boot_sig_v3 */
+		{ .name = "imgsig", }, /* aml_img_sig */
+		{ .name = "mksd", }, /* aml_mk_sd */
+		{ .name = "sha", }, /* aml_sha */
+		{ .name = "upsig", }, /* aml_upgrade_sig */
+		{ .name = "mkpsd", }, /* aml_mk_password */
+		{ .name = "mkcusid", }, /* aml_mk_customer_id */
+		{ .name = "bl2sig", }, /* aml_bl2_sig */
+		{ .name = "bl2enc", }, /* aml_bl2_enc */
+		{ .name = "bl2sig3", }, /* aml_bl2_sig_v3 */
+		{ .name = "bl2enc3", }, /* aml_bl2_enc */
+		{ .name = "bl3enc", }, /* aml_bl3_enc */
+		{ .name = "bl3sig", }, /* aml_bl3_sig */
+		{ .name = "bl3sig3", }, /* aml_bl3_sig_v3 */
+		{ .name = "bootmk", }, /* aml_boot_make */
+		{ .name = "bootmk3", }, /* aml_boot_make_v3 */
+		{ .name = "efsgen", }, /* aml_efuse_gen */
+		{ .name = "efsgen3", }, /* aml_efuse_gen_v3 */
+		{ .name = "bin2hex", }, /* aml_bin2hex */
+		{ .name = "efsproc", }, /* aml_efuse_process */
+		{ .name = "help", }, /* aml_show_help */
+		{},
+
+	};
+	int optidx;
+
+	t = time();
+	srand(t);
+	if(argc <= 1) {
+		aml_show_help(0, 0);
+		goto out;
+	}
+
+
+	if(getopt_long(2, argv, "", opt, &optidx) == -1) {
+		aml_show_help(0, 0);
+		goto out;
+	}
+
+	if(optidx < 0) {
+		aml_show_help(0, 0);
+		goto out;
+	}
+
+	if(optidx > sizeof(action) / sizeof(*action))
+		optidx = sizeof(action) / sizeof(*action);
+
+	ret = (*action)(argc, argv);
+	if(ret != 0) {
+		aml_show_help(0, 0);
+		goto out;
+	}
+out:
+	return ret;
+}
