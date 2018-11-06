@@ -1,5 +1,51 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <uuid/uuid.h>
+
+
+static int aml_file_copy(FILE *fin, FILE *fout, int sz)
+{
+	/* fin -> -0xc8 */
+	/* fout -> -0xd0 */
+	/* sz -> -0xd4 */
+	int fout_off; /* -0xac */
+	uint8_t *buf; /* -0xa8 */
+	int ret = 0x427; /* -0xb8 */
+	int len = 0; /* -0xb4 */
+	int fincur; /* -0xb0 */
+
+	buf = malloc(0x400);
+	if((fin == NULL) || (fout == NULL))
+		goto out;
+
+	ret = 0x42f;
+	fincur = ftell(fin);
+	fout_off = ftell(fout);
+	fseek(fin, 0, SEEK_END);
+	len = ftell(fin);
+
+	if(len - fincur < sz)
+		goto out;
+
+	fseek(fin, fincur, SEEK_SET);
+	ret = 0x43e;
+	while(sz > 0) {
+		len = fread(buf, 0x1, (sz < 0x400) ? sz : 0x400, fin);
+		if(len == 0)
+			break;
+		fwrite(buf, 0x1, len, fout);
+		sz -= len;
+	}
+
+	ret = 0;
+
+out:
+	if(buf) {
+		free(buf);
+		buf = NULL;
+	}
+	return ret;
+}
 
 enum bl2sig_optid {
 	B2S_INPUT, /* 0x0 */
@@ -891,6 +937,438 @@ static int aml_bl3_enc(int argc, char **argv)
 
 	ret = aml_bl3_enc_file(argvalue);
 	return ret;
+}
+
+struct aml_uboot_arg {
+	char *path;
+	char *key;
+	/* Extra space 0x30 */
+};
+
+struct aml_sig_arg {
+	char *path;
+	char *key;
+	char *desc;
+};
+
+static int aml_uboot_process(struct aml_uboot_arg *arg, int v3)
+{
+	/* arg -> -0x188 */
+	/* v3 -> -0x18c */
+	uint32_t ret = 0x1cd4; /* -0x174 */
+	uint64_t i = 0; /* -0x170 */
+	uint32_t nr; /* -0x16c */
+	FILE *fuboot = NULL; /* -0x168 */
+	FILE *fout = NULL; /* -0x160 */
+	uint8_t *buf; /* -0x158 */
+	struct aml_sig_arg asa; /* -0x150 -> -0x120 */
+	uint8_t path[0x100]; /* -0x120 -> -0x20 */
+
+	if(arg == NULL)
+		goto out;
+
+	fuboot = fopen(arg->path, "rb");
+	buf = malloc(0xc000);
+
+	if((fuboot == NULL) || (buf == NULL)) /* Yep leak */
+		goto out;
+
+	/* Copy u-boot.usb.bl2 */
+	bzero(path, 0x100);
+	sprintf(path, "%s.usb.bl2", arg->path);
+	bzero(buf, 0xc000);
+	fout = fopen(path, "wb");
+	if(fout) {
+		fread(buf, 0x1, 0xc000, fuboot);
+		fwrite(buf, 0x1, 0xc000, fout);
+		fclose(fout);
+		fout = NULL;
+	}
+
+	/* Copy u-boot.usb.tpl */
+	sprintf(path, "%s.usb.tpl", arg->path);
+	fout = fopen(path, "wb");
+	if(fout) {
+		nr = fread(buf, 0x1, 0xc000, fuboot);
+		while(nr != 0) {
+			fwrite(buf, 0x1, nr, fout);
+			nr = fread(buf, 0x1, 0xc000, fuboot);
+		}
+		fclose(fout);
+		fout = NULL;
+	}
+
+	/* Copy u-boot.sd.bin */
+	fseek(fuboot, 0x0, SEEK_SET);
+	sprintf(path, "%s.sd.bin", arg->path);
+	fout = fopen(path, "wb");
+	if(fout) {
+		for(i = 0; i < 0x200; ++i)
+			buf[i] = rand();
+		fwrite(buf, 0x1, 0x200, fout);
+		while((i = fread(buf, 0x1, 0xc000, fuboot)) != 0)
+			fwrite(buf, 0x1, i, fout);
+		fclose(fout);
+		fout = NULL;
+	}
+	ret = 0;
+	if(arg->key == NULL)
+		goto out; /* Exit normally */
+
+	bzero(asa, sizeof(asa)/*0x30*/);
+	asa.path = arg->path;
+	asa.key = arg->key;
+	asa.desc = "sig";
+	aml_upgrade_sig_file(&asa);
+out:
+	if(fuboot) {
+		fclose(fuboot);
+		fuboot = NULL;
+	}
+
+	if(fout) {
+		fclose(fout);
+		fout = NULL;
+	}
+
+	return ret;
+}
+
+enum bootmk_optid {
+	BMK_BL2, /* 0x0 */
+	BMK_BL30, /* 0x8 */
+	BMK_BL31, /* 0x10 */
+	BMK_BL32, /* 0x18 */
+	BMK_BL33, /* 0x20 */
+	BMK_BL3X, /* 0x28 */
+	BMK_OUTPUT, /* 0x30 */
+	BMK_USERKEY, /* 0x38 */
+	BMK_LEVEL, /* 0x40 */
+	BMK_INPUT, /* 0x48 */
+	BMK_NR,
+};
+
+static uuid_t const uuid_list[] = { /* 0x716700 */
+	[BMK_BL2] = {
+		0x5f, 0xf9, 0xec, 0x0b, 0x4d, 0x22, 0x3e, 0x4d,
+		0xa5, 0x44, 0xc3, 0x9d, 0x81, 0xc7, 0x3f, 0x0a
+	},
+	[BMK_BL30] = {
+		0x97, 0x66, 0xfd, 0x3d, 0x89, 0xbe, 0xe8, 0x49,
+		0xae, 0x5d, 0x78, 0xa1, 0x40, 0x60, 0x82, 0x13
+	},
+	[BMK_BL31] = {
+		0x47, 0xd4, 0x08, 0x6d, 0x4c, 0xfe, 0x98, 0x46,
+		0x9b, 0x95, 0x29, 0x50, 0xcb, 0xbd, 0x5a, 0x00
+	},
+	[BMK_BL32] = {
+		0x05, 0xd0, 0xe1, 0x89, 0x53, 0xdc, 0x13, 0x47,
+		0x8d, 0x2b, 0x50, 0x0a, 0x4b, 0x7a, 0x3e, 0x38
+	},
+	[BMK_BL33] = {
+		0xd6, 0xd0, 0xee, 0xa7, 0xfc, 0xea, 0xd5, 0x4b,
+		0x97, 0x82, 0x99, 0x34, 0xf2, 0x34, 0xb6, 0xe4
+	},
+};
+
+struct  fip_toc_header {
+	uint32_t name; 0xaa640001
+	uint32_t serial_number; 0x12345678
+	uint64_t flags;
+};
+FT_NAME 0xaa640001 /* Should use htole32 */
+FT_SERIAL 0x12345678 /* Should use htole32 */
+
+#define FIP_TOC_HEADER							\
+	((struct fip_toc_header)({					\
+		.name = FT_NAME,					\
+		.serial_number = FT_SERIAL				\
+	})
+
+struct fip_toc_entry {
+	uuid_t uuid;
+	uint64_t offset;
+	uint64_t size;
+	uint64_t flags;
+};
+
+/* Get fip entry offset from fip base */
+#define FTE_GET(fbase, nr)						\
+	((struct fip_toc_entry *)((fbase) + sizeof(struct fip_toc_header))[nr])
+
+static int aml_boot_make(int argc, char **argv)
+{
+	/* argc = -0x4bb4 */
+	/* argv = -0x4bc0 */
+	int32_t longoptidx; /* -0x4ba4 */
+	uint32_t ret = 0x325e; /* -0x4ba0 */
+	int32_t i; /* -0x4b9c */
+	uint32_t key = 0; /* -0x4b98 */
+	uint32_t bl3id; /* -0x4b94 */
+	uint32_t bloff; /* -0x4b90 */
+	uint32_t a; /* -0x4b8c */
+	uint32_t z3; /* -0x4b88 */
+	uint32_t w0; /* -0x4b84 */
+	uint32_t padlen; /* -0x4b80 */
+	uint32_t blcur; /* -0x4b7c */
+	FILE *fd = NULL; /* -0x4b78 */
+	FILE *fbl; /* -0x4b70 */
+	uint8_t *ptr; /* -0x4b68 */
+	uint8_t *padbuf; /* -0x4b60 */
+	uint8_t buf[0x50]; /* -0x4b50 -> -0x4b00 */
+	struct rsa_context *ctx; /* -0x4b00 -> ~-0x49e4 */
+	char *argval[11] = {}; /* -0x49e0 -> -0x4988 */
+	struct stat st; /* -0x4980 -> -0x48f0 */
+	struct option opt[] = { /* -0x48f0 -> -0x4790 */
+		{
+		        .name = "bl2",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '0',
+		},
+		{
+		        .name = "bl30",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '1',
+		},
+		{
+		        .name = "bl31",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '3',
+		},
+		{
+		        .name = "bl32",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '4',
+		},
+		{
+		        .name = "bl33",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '5',
+		},
+		{
+		        .name = "bl3x",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '6',
+		},
+		{
+		        .name = "output",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '7',
+		},
+		{
+		        .name = "userkey",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '8',
+		},
+		{
+		        .name = "input",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = '9',
+		},
+		{
+		        .name = "level",
+		        .has_arg = 1,
+		        .flag = NULL,
+		        .val = 'a',
+		},
+		{},
+	};
+	uint8_t fiphdr[0x200]; /* -0x4790 -> -0x4590 */
+	uint8_t hdr[0x200]; /* -0x4590 -> -0x4390 */
+	char fip[0x4000]; /* -0x4150 -> -0x150 */
+	char rd[0x30]; /* -0x150 -> -0x120 */
+	char path[/*????*/]; /* -0x120 */
+
+	for(i = 0; i < argc; i++);
+
+	while((i = getopt_long(argc, argv, "", opt, &longoptidx)) != -1)
+		argval[longoptidx] = optarg;
+
+	ret = 0x3287;
+	if((argval[BMK_LEVEL] != NULL) &&
+			((.plt + 0x70)(argval[BMK_LEVEL], "v3"))) { /* strcmp */
+		optind = 0x3; /* Reset getopt_long() */
+		aml_boot_make_v3(argc, argv);
+		return;
+	}
+
+	rsa_init(&ctx, 0, 0);
+
+	if((stat64(argval[BMK_USERKEY], &st) == 0) &&
+		(aml_gx_load_rsa_key_file(ctx, argval[BMK_USERKEY]) == 0)) {
+		key = 1;
+	}
+
+	if(argval[BMK_OUTPUT] != NULL)
+		(.plt)(path, argval[BMK_OUTPUT]); /* XXX Buf overflow */
+	else
+		sprintf(path, "%s%s", argval[BMK_BL2], (key) ? ".encrypt" : ".pkg");
+
+	ret = 0x32a5;
+	remove(path);
+	fd = fopen(path, "wb+");
+	if(fd == NULL)
+		goto out;
+
+	fbl = NULL;
+	bzero(fip, sizeof(fip));
+
+	memcpy(fip, &FIP_TOC_HEADER, sizeof(struct fip_toc_header));
+
+	(.plt + 0x60)(fip + 0xc00, 0xff, 0x80);  /* memset */
+
+	ptr = fip + 16;
+	bl3id = 0;
+	bloff = sizeof(fip);
+	z3 = 0;
+
+	/* For bl2, bl30, bl31, bl32, bl33 */
+	for(a = 0; a <= 4; ++a) {
+		if(stat64(argval[a], &st) != 0)
+			continue;
+
+		fbl = fopen(argval[a], "rb");
+		if(fbl == NULL)
+			continue;
+
+		if(a == BMK_BL2) {
+			ret = 0x32d4;
+			aml_file_copy(fbl, fd, 0xc000);
+			fwrite(fip, 0x1, 0x4000, fd);
+			fclose(fbl);
+			fbl = NULL;
+		} else {
+			fseek(fbl, 0x0, SEEK_SET);
+			bzero(buf, sizeof(buf));
+			fread(buf, 0x1, 0x50, fbl);
+			w0 = 0x58;
+			if(RD_32(buf, 0) == 0x12348765) { /* Should not happen */
+				w0 += 0x50;
+				WR_32(fip, 0x400, 0x87654321);
+				WR_32(fip, 0x404, 0x1);
+				memcpy(fip + 0x430 + 0x50 * bl3id, buf, 0x50);
+			}
+
+			/* Set Fip Toc entry */
+			memcpy(&FTE_GET(fip, bl3id).uuid, uuid_list[a],
+					sizeof(uuid_list[a]));
+			FTE_GET(fip, bl3id).offset = htole64(bloff);
+			if(st.st_size != 0) {
+				rax = w0 + 0x438;
+			} else {
+				rax = 0;
+			}
+			FTE_GET(fip, bl3id).size = st.st_size - rax;
+			if(key) {
+				/* XXX TODO */
+			} else {
+				ret = 0x3325;
+				bzero(hdr, sizeof(hdr));
+				fseek(fbl, 0x0, SEEK_SET);
+				blcur = ftell(fbl);
+				fread(hdr, 0x1, 0x200, fbl);
+				if(aml_ctrl_blk_check(hdr) != 0)
+					goto out;
+				fseek(fbl, blcur, SEEK_SET);
+				if(RD_32(hdr, 0x100) == 0x12348765) { /* BL31 */
+					WR_32(fip, 0x400, 0x87654321);
+					WR_32(fip, 0x404, 0x1);
+					memcpy(fip + (bl3id * 4 + bl3id) * 16 + 0x430, hdr + 100, 0x50);
+				}
+			}
+			aml_file_copy(fbl, fd, FTE_GET(fip, bl3id).size);
+			fclose(fbl);
+			fbl = NULL;
+			bloff += FTE_GET(fip, bl3id).size;
+			if(bloff & 0x3fff) {
+				padlen = 0x4000 - (bloff & 0x3fff);
+			} else {
+				padlen = 0;
+			}
+
+			if(padlen) {
+				padbuf = malloc(padlen);
+				if(padbuf) {
+					for(i = 0; i < padlen; ++i)
+						padbuf = rand();
+					fwrite(padbuf, 1, padlen, fd);
+					free(padbuf);
+					padbuf = NULL;
+				}
+			}
+			bloff += pad;
+			++bl3id;
+		}
+	}
+
+	fseek(fd, 0xc000, SEEK_SET);
+	fwrite(fip, 0x1, 0x4000, fd);
+	bzero(fiphdr, 0x200);
+	WR_16(fiphdr, 2, 0x200);
+	WR_16(fiphdr, 250, 0x200);
+	WR_16(fiphdr, 4, 0x1); /* AES CBC */
+	WR_16(fiphdr, 6, 0x1);
+	WR_32(fiphdr, 12, *((uint32_t *)"AMLC"));
+	WR_32(fiphdr, 252, *((uint32_t *)"AMLC"));
+	WR_32(fiphdr, 16, 0x4000 - 0x200); /* aessz */
+	WR_32(fiphdr, 20, 0x200);
+	WR_32(fiphdr, 28, 0x4000 - 0x200);
+	WR_32(fiphdr, 32, 0x4000 - 0x200); /* shasz */
+	bzero(rd, sizeof(rd));
+
+	if(RD_16(fiphdr, 4) == 0x1) { /* AES CBC */
+		for(i = 0; i < sizeof(rd); ++i)
+			rd[i] = rand();
+		memcpy(fiphdr + 0x40, rd, sizeof(rd));
+		fseek(fd, 0xc000, SEEK_SET);
+		ret = aml_file_aes(fd, RD_32(fiphdr, 0x10) /* aessz */, rd, 1);
+		if(ret != 0)
+			goto out;
+		aml_set_blk_time_stamp(C_AES, fiphdr);
+	}
+
+	fseek(fd, 0xc000, SEEK_SET);
+	ret = aml_file_sha2(fd, RD_32(fiphdr, 0x20) /*shasz */, RD_32(fiphdr, 0x10) /* aessz */);
+	if(ret != 0)
+		goto out;
+
+	fseek(fd, 0xc000, SEEK_SET);
+	fread(hdr, 0x1, sizeof(hdr), fd);
+	if(key) {
+		/* XXX TODO */
+	}
+
+	fseek(fd, 0xc000, SEEK_SET);
+	fwrite(fiphdr, 0x1, 0x200, fd);
+	fseek(fd, 0xfe00, SEEK_SET);
+	fwrite(hdr, 0x200, fd); /* Put first block at the end */
+
+	ret = 0;
+out:
+	if(fd)
+		fclose(fd);
+
+	if(ret = 0) {
+		bzero(hdr, 0x40);
+		struct aml_uboot_arg *a = (aml_uboot_arg *)hdr;
+		a->path = &path;
+		if(key)
+			a.key = &argval[BMK_USERKEY];
+		ret = aml_uboot_process(a, 0);
+	} else {
+		remove(path);
+	}
+
+	return;
 }
 
 int main(int argc, char **argv)
