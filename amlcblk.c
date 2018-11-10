@@ -386,7 +386,7 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 		SSLERR(ret, "Cannot finalise binary payload: ");
 		goto out;
 	}
-	acb->encsz = 0;
+	acb->encsz = acb->payloadsz;
 	AMLCBLK_SET_ENCRYPT(acb);
 	ret = 0;
 
