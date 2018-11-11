@@ -1,0 +1,100 @@
+gxlimg
+======
+
+Gxlimg is an amlogic s905x boot image creation tools. This has been made by
+reverse engineering the aml_encrypt_gxl binary used to create boot image as
+well as the BL2 arm binary that reads FIP header and loads BL3* and u-boot
+images.
+
+Some reverse engineering notes can be found in reveng directory, please note
+that because I decompiled aml_encrypt_gxl by hand (not using a tool like IDA),
+some mistakes could have slept in those notes. The purpose was first to
+familiarized myself with subject such as ARM assembly and Arm Trust Firmware
+(ATF).
+
+
+I - Build instructions
+----------------------
+
+In order to build this tool just use the following:
+
+ $ make
+
+If you want some debug information and print use the following instead:
+
+ $ make DEBUG=1
+
+
+II - Create a boot image
+------------------------
+
+In order to create a boot image for s905x board such as lepotato board, you
+can follow those steps below.
+
+
+1) Get BL* binaries:
+
+  Follow instructions from here https://github.com/BayLibre/u-boot that build
+  vendor u-boot in order to get BL* binaries.
+
+2) Encrypt BL2:
+
+  Use gxlimg as below to encrypt BL2 binary along with its DDR initialization
+  datas:
+
+   $ ./fip/blx_fix.sh fip/gxl/bl2_acs.bin zero_tmp fip/gxl/bl2_zero.bin \
+     fip/gxl/bl21.bin fip/gxl/bl21_zero.bin bl2_new.bin bl2
+   $ gxlimg -t bl2 -c bl2_new.bin bl2.bin.enc
+
+3) Encrypt BL3*:
+
+  Use the following to encrypt BL3* binary
+
+   $ gxlimg -t bl3 -c ./fip/gxl/bl30_new.bin bl30.bin.enc
+   $ gxlimg -t bl3 -c ./fip/gxl/bl31.img bl31.img.enc
+
+4) Encrypt u-boot:
+
+  Compile baylibre u-boot by following instruction here
+  https://github.com/BayLibre/u-boot. Then encrypt u-boot image:
+
+   $ gxlimg -t bl3 -c u-boot.bin u-boot.bin.enc
+
+5) Create the final boot image:
+
+  To create the final image issue the command below:
+
+   $ gxlimg -t fip --bl2 ./bl2.bin.enc --bl30 ./bl30.bin.enc \
+     --bl31 ./bl31.img.enc --bl33 ./u-boot.bin.enc ./gxl-boot.bin
+
+6) Prepare the SD card:
+
+  First compute how many sectors gxl-boot.bin uses by getting its size and
+  dividing it by 512.
+
+  Let's say your gxl-boot.bin is 653312 Bytes thus you need 1276 sectors you
+  can give you a little bit margin and choose a gap of 2048 sectors for your
+  first partion.
+
+  Then create the partition:
+
+   $ sudo fdisk /dev/mmcpblk0
+   $ n
+   $ p
+   $ 1
+   $ 2048 # <- enter the number of sectors previously computed
+   $ # <- take the whole remaining space for the partition
+   $ w
+
+  Then create a fs on it:
+
+   $ mkfs.ext3 /dev/mmcblk0p1
+
+  And copy or install a linux ARM file system.
+
+7) Copy boot image to SD:
+
+  The copy image to SD being careful to not erase the first 512 block (holding
+  the MBR partition table)
+
+   $ dd if=./gxl-boot.bin of=/dev/mmcblk0 bs=512 seek=1
