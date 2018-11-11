@@ -8,6 +8,7 @@ OBJ := $(SRC:%.c=%.o)
 BUILDDIR := build
 DEPENDS := $(OBJ:%.o=$(BUILDDIR)/%.d)
 PROG := gxlimg
+FIPARCHIVE := libretech-cc_fip_20180418.tar.gz
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -DDEBUG=1 -g -O0
@@ -33,12 +34,70 @@ $(PROG): $(OBJ:%=$(BUILDDIR)/%)
 $(BUILDDIR)/%.o: %.c | builddir
 	$(CC) -MMD -c $(CFLAGS) -o $@ $<
 
+$(BUILDDIR)/$(FIPARCHIVE):
+	curl -L https://github.com/BayLibre/u-boot/releases/download/v2017.11-libretech-cc/$(FIPARCHIVE) -o $(BUILDDIR)/$(FIPARCHIVE)
+
+fip-clean:
+	if [ -d "$(BUILDDIR)/fip" ]; then rm -r "$(BUILDDIR)/fip"; fi
+
+ifdef FIP
+fip: fip-clean
+	cp -r "$(FIP)/" "$(BUILDDIR)/fip"
+else
+fip: $(BUILDDIR)/$(FIPARCHIVE) fip-clean
+	tar -mxvzf $< -C $(BUILDDIR)
+endif
+
+$(BUILDDIR)/fip/gxl/bl2_acs.bin: fip
+	python acs_tool.py $(BUILDDIR)/fip/gxl/bl2.bin \
+		$@ $(BUILDDIR)/fip/gxl/acs.bin 0
+
+$(BUILDDIR)/fip/gxl/bl2_new.bin: $(BUILDDIR)/fip/gxl/bl2_acs.bin fip
+	$(BUILDDIR)/fip/blx_fix.sh $< zero_tmp \
+		$(BUILDDIR)/fip/gxl/bl2_zero.bin $(BUILDDIR)/fip/gxl/bl21.bin \
+		$(BUILDDIR)/fip/gxl/bl21_zero.bin $@ bl2
+
+$(BUILDDIR)/fip/gxl/bl2.bin.enc: $(BUILDDIR)/fip/gxl/bl2_new.bin $(PROG)
+	./$(PROG) -t bl2 -c $< $@
+
+$(BUILDDIR)/fip/gxl/bl30_new.bin: fip
+	$(BUILDDIR)/fip/blx_fix.sh $(BUILDDIR)/fip/gxl/bl30.bin zero_tmp \
+	$(BUILDDIR)/fip/gxl/bl30_zero.bin $(BUILDDIR)/fip/gxl/bl301.bin \
+	$(BUILDDIR)/fip/gxl/bl301_zero.bin $@ bl30
+
+$(BUILDDIR)/fip/gxl/bl30.bin.enc: $(BUILDDIR)/fip/gxl/bl30_new.bin $(PROG)
+	./$(PROG) -t bl3 -c $< $@
+
+$(BUILDDIR)/fip/gxl/bl31.bin.enc: fip $(PROG)
+	./$(PROG) -t bl3 -c $(BUILDDIR)/fip/gxl/bl31.img $@
+
+$(BUILDDIR)/fip/gxl/u-boot.bin.enc: $(PROG) $(UBOOT)
+ifdef UBOOT
+	./$(PROG) -t bl3 -c "$(UBOOT)" $@
+else
+	$(error UBOOT variable is missing)
+endif
+
+$(BUILDDIR)/gxl-boot.bin: $(PROG) $(BUILDDIR)/fip/gxl/bl2.bin.enc $(BUILDDIR)/fip/gxl/bl30.bin.enc $(BUILDDIR)/fip/gxl/bl31.bin.enc $(BUILDDIR)/fip/gxl/u-boot.bin.enc
+	./$(PROG) -t fip \
+		--bl2 $(BUILDDIR)/fip/gxl/bl2.bin.enc \
+		--bl30 $(BUILDDIR)/fip/gxl/bl30.bin.enc \
+		--bl31 $(BUILDDIR)/fip/gxl/bl31.bin.enc \
+		--bl33 $(BUILDDIR)/fip/gxl/u-boot.bin.enc \
+		$@
+
+image: $(BUILDDIR)/gxl-boot.bin
+
+image-clean: fip-clean
+	$(call rm-file, $(BUILDDIR)/$(FIPARCHIVE))
+	$(call rm-file, $(BUILDDIR)/gxl-boot.bin)
+
 builddir:
 	@mkdir -p $(BUILDDIR)
 
 .PHONY: clean distclean
 
-clean:
+clean: image-clean
 	$(foreach o, $(OBJ:%=$(BUILDDIR)/%), $(call rm-file, $(o)))
 	$(call rm-dir, $(BUILDDIR))
 

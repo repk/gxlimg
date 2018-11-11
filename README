@@ -24,9 +24,27 @@ If you want some debug information and print use the following instead:
 
  $ make DEBUG=1
 
+II.A - Create a boot image - automated version
+----------------------------------------------
 
-II - Create a boot image
-------------------------
+1) Compile u-boot:
+
+  Compile mainline u-boot from http://git.denx.de/
+
+   $ make CROSS_COMPILE=aarch64-elf- libretech-cc_defconfig
+   $ make CROSS_COMPILE=aarch64-elf- all
+
+  Replace aarch64-elf- with the prefix of your aarch64 toolchain.
+  This should produce a u-boot-dtb.bin file.
+
+2) Generate image
+
+  Use the image target to generate the build/gxl-boot.bin image.
+
+  $ make image UBOOT=<path/to/u-boot-dtb.bin>
+
+II.B - Create a boot image - manual version
+-------------------------------------------
 
 In order to create a boot image for s905x board such as lepotato board, you
 can follow those steps below.
@@ -53,21 +71,33 @@ can follow those steps below.
    $ gxlimg -t bl3 -c ./fip/gxl/bl30_new.bin bl30.bin.enc
    $ gxlimg -t bl3 -c ./fip/gxl/bl31.img bl31.img.enc
 
-4) Encrypt u-boot:
+4) Compile u-boot:
 
-  Compile baylibre u-boot by following instruction here
-  https://github.com/BayLibre/u-boot. Then encrypt u-boot image:
+  Compile mainline u-boot from http://git.denx.de/
+
+   $ make CROSS_COMPILE=aarch64-elf- libretech-cc_defconfig
+   $ make CROSS_COMPILE=aarch64-elf- all
+
+  Replace aarch64-elf- with the prefix of your aarch64 toolchain.
+  This should produce a u-boot-dtb.bin file.
+
+5) Encrypt u-boot:
+
+  Encrypt the previously built u-boot image:
 
    $ gxlimg -t bl3 -c u-boot.bin u-boot.bin.enc
 
-5) Create the final boot image:
+6) Create the final boot image:
 
   To create the final image issue the command below:
 
    $ gxlimg -t fip --bl2 ./bl2.bin.enc --bl30 ./bl30.bin.enc \
      --bl31 ./bl31.img.enc --bl33 ./u-boot.bin.enc ./gxl-boot.bin
 
-6) Prepare the SD card:
+III - Write the image to the SD card
+------------------------------------
+
+1) Prepare the SD card:
 
   First compute how many sectors gxl-boot.bin uses by getting its size and
   dividing it by 512.
@@ -92,7 +122,7 @@ can follow those steps below.
 
   And copy or install a linux ARM file system.
 
-7) Copy boot image to SD:
+2) Copy boot image to SD:
 
   The copy image to SD being careful to not erase the first 512 block (holding
   the MBR partition table)
