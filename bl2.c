@@ -7,20 +7,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <openssl/evp.h>
-#include <openssl/err.h>
-
 #include "gxlimg.h"
 #include "bl2.h"
-
-#define SSLERR(ret, ...) do						\
-{									\
-	char __sslerrbuf[256];						\
-	fprintf(stderr, __VA_ARGS__);					\
-	ret = -ERR_get_error();						\
-	ERR_error_string_n(-ret, __sslerrbuf, sizeof(__sslerrbuf));	\
-	fprintf(stderr, "%s\n", __sslerrbuf);				\
-} while(0)
+#include "ssl.h"
 
 #define FOUT_MODE_DFT (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 

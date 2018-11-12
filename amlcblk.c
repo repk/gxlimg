@@ -12,15 +12,7 @@
 
 #include "gxlimg.h"
 #include "amlcblk.h"
-
-#define SSLERR(ret, ...) do						\
-{									\
-	char __sslerrbuf[256];						\
-	fprintf(stderr, __VA_ARGS__);					\
-	ERR_error_string_n(-ret, __sslerrbuf, sizeof(__sslerrbuf));	\
-	fprintf(stderr, "%s\n", __sslerrbuf);				\
-} while(0)
-
+#include "ssl.h"
 
 #define AMLCBLK_ENCRYPT (1 << 0)
 #define AMLCBLK_HDR (1 << 1)
