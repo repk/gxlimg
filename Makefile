@@ -100,6 +100,7 @@ builddir:
 
 clean: image-clean
 	$(foreach o, $(OBJ:%=$(BUILDDIR)/%), $(call rm-file, $(o)))
+	$(foreach d, $(DEPENDS), $(call rm-file, $(d)))
 	$(call rm-dir, $(BUILDDIR))
 
 distclean: clean
