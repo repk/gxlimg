@@ -101,13 +101,12 @@ static void gi_amlcblk_blk_pad(struct amlcblk const *acb, uint8_t *blk,
  */
 int gi_amlcblk_init(struct amlcblk *acb, int fd)
 {
-	size_t i, nr;
+	size_t nr;
 	off_t fsz;
 	uint8_t hdr[AMLCBLKSZ];
 	int ret;
 
 	acb->flag = 0;
-	srand(time(NULL));
 	fsz = lseek(fd, 0, SEEK_SET);
 	if(fsz < 0) {
 		SEEK_ERR(fsz, ret);
@@ -136,11 +135,10 @@ int gi_amlcblk_init(struct amlcblk *acb, int fd)
 	acb->firstblk = fsz;
 	acb->encsz = 0;
 	acb->payloadsz = fsz;
-	for(i = 0; i < sizeof(acb->iv); ++i)
-		acb->iv[i] = rand();
-	for(i = 0; i < sizeof(acb->aeskey); ++i)
-		acb->aeskey[i] = rand();
-	ret = 0;
+	ret = gi_random(acb->iv, sizeof(acb->iv));
+	if(ret < 0)
+		goto out;
+	ret = gi_random(acb->aeskey, sizeof(acb->aeskey));
 out:
 	return ret;
 }

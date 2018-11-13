@@ -35,4 +35,40 @@ static inline void EVP_MD_CTX_free(EVP_MD_CTX *ctx)
 }
 #endif
 
+/**
+ * Fill a buffer with random data
+ *
+ * @param buf: Buffer to fill with random data
+ * @param sz: Number of random byte to read
+ *
+ * @return: 0 on success negative number otherwise
+ */
+static inline int gi_random(uint8_t *buf, size_t sz)
+{
+	int ret, fd = -1;
+	size_t i;
+	ssize_t nr;
+
+	ret = open("/dev/urandom", O_RDONLY);
+	if(ret < 0) {
+		PERR("Cannot open /dev/urandom: ");
+		goto out;
+	}
+	fd = ret;
+
+	for(i = 0; i < sz; i += nr) {
+		nr = read(fd, buf, sz - i);
+		if(nr < 0) {
+			PERR("Cannot read /dev/urandom: ");
+			ret = (int)nr;
+			goto out;
+		}
+	}
+	ret = 0;
+out:
+	if(fd >= 0)
+		close(fd);
+	return ret;
+}
+
 #endif

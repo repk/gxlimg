@@ -124,18 +124,19 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 {
 	uint8_t hdr[BL2HDR_SZ] = {};
 	uint8_t rd[BL2RAND_SZ];
-	size_t i;
 	ssize_t nr;
 	off_t off;
+	int ret;
 
 	if(BF_IS_RSA(bl2)) {
 		ERR("BL2 RSA signature not supported yet\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
-	srand(time(NULL));
-	for(i = 0; i < BL2RAND_SZ; ++i)
-		rd[i] = rand();
+	ret = gi_random(rd, BL2RAND_SZ);
+	if(ret < 0)
+		goto out;
 
 	off = lseek(fd, 0, SEEK_SET);
 	if(off < 0) {
@@ -161,15 +162,19 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 	nr = gi_bl2_write_blk(fd, rd, sizeof(rd));
 	if(nr != sizeof(rd)) {
 		PERR("Failed to write random number in bl2 boot img: ");
-		return (int)nr;
+		ret = (int)nr;
+		goto out;
 	}
 
 	nr = gi_bl2_write_blk(fd, hdr, sizeof(hdr));
 	if(nr != sizeof(hdr)) {
 		PERR("Failed to write header in bl2 boot img: ");
-		return (int)nr;
+		ret = (int)nr;
+		goto out;
 	}
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
 static int gi_bl2_dump_key(struct bl2 const *bl2, int fd)
