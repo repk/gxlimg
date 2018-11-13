@@ -216,7 +216,7 @@ static inline int fip_init(struct fip *fip)
 	}
 
 	nr = gi_fip_write_blk(fip->fd, (uint8_t *)FIP_TOC_HEADER,
-			sizeof(FIP_TOC_HEADER));
+			sizeof(*FIP_TOC_HEADER));
 	if(nr < 0) {
 		PERR("Cannot write fip toc header: ");
 		close(fip->fd);
