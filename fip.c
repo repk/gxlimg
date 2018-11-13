@@ -218,6 +218,7 @@ static inline int fip_init(struct fip *fip)
 	unsigned long long init = 0xffffffffffffffffULL;
 	ssize_t nr;
 	size_t i;
+	off_t off;
 	int ret;
 
 	strncpy(fip->path, FIP_TEMPPATH, sizeof(fip->path));
@@ -226,14 +227,16 @@ static inline int fip_init(struct fip *fip)
 	fip->fd = gi_fip_create_tmp(fip->path);
 	if(fip->fd < 0) {
 		PERR("Cannot create fip temp: ");
-		return -errno;
+		ret =  -errno;
+		goto out;
 	}
 
 	ret = ftruncate(fip->fd, FIP_SZ - 0x200);
 	if(ret < 0) {
 		PERR("Cannot truncate fip toc header: ");
 		close(fip->fd);
-		return -errno;
+		ret = -errno;
+		goto out;
 	}
 
 	nr = gi_fip_write_blk(fip->fd, (uint8_t *)FIP_TOC_HEADER,
@@ -241,20 +244,29 @@ static inline int fip_init(struct fip *fip)
 	if(nr < 0) {
 		PERR("Cannot write fip toc header: ");
 		close(fip->fd);
-		return -errno;
+		ret = -errno;
+		goto out;
 	}
 
 	/* End of toc entry */
-	lseek(fip->fd, 0xc00, SEEK_SET);
+	off = lseek(fip->fd, 0xc00, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	for(i = 0; i < 0x80 / sizeof(init); ++i) {
 		nr = gi_fip_write_blk(fip->fd, (uint8_t *)&init, sizeof(init));
 		if(nr < 0) {
 			PERR("Cannot write fip toc last entry: ");
 			close(fip->fd);
-			return -errno;
+			ret = -errno;
+			goto out;
 		}
 	}
-	return 0;
+	ret = 0;
+
+out:
+	return ret;
 }
 
 /**
@@ -279,10 +291,15 @@ static inline void fip_cleanup(struct fip *fip)
 static int gi_fip_dump_img(int fdin, int fdout, size_t off)
 {
 	ssize_t nrd, nwr;
+	off_t o;
 	int ret;
 	uint8_t block[512];
 
-	lseek(fdout, off, SEEK_SET);
+	o = lseek(fdout, off, SEEK_SET);
+	if(o < 0) {
+		SEEK_ERR(o, ret);
+		goto out;
+	}
 
 	do {
 		nrd = gi_fip_read_blk(fdin, block, sizeof(block));
@@ -324,16 +341,26 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 	struct fip_toc_entry entry;
 	size_t sz;
 	ssize_t nr;
+	off_t off;
 	int ret;
 	uint8_t buf[FTE_BL31HDR_SZ];
 
-	sz = lseek(fdin, 0, SEEK_END);
+	off = lseek(fdin, 0, SEEK_END);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	sz = (size_t)off;
 	memcpy(entry.uuid, uuid_list[type], sizeof(entry.uuid));
 	entry.offset = fip->cursz;
 	entry.flags = 0;
 	entry.size = sz;
 
-	lseek(fip->fd, FTE_OFF(fip->nrentries), SEEK_SET);
+	off = lseek(fip->fd, FTE_OFF(fip->nrentries), SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	nr = gi_fip_write_blk(fip->fd, (uint8_t *)&entry, sizeof(entry));
 	if(nr < 0) {
 		PERR("Cannot write FIP entry\n");
@@ -341,7 +368,11 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		goto out;
 	}
 
-	lseek(fdin, 256, SEEK_SET);
+	off = lseek(fdin, 256, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	nr = gi_fip_read_blk(fdin, buf, sizeof(buf));
 	if(nr <= 0) {
 		PERR("Cannot read BL image entry\n");
@@ -350,7 +381,11 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 	}
 
 	if(le32toh(*(uint32_t *)buf) == BL31_MAGIC) {
-		lseek(fip->fd, 1024, SEEK_SET);
+		off = lseek(fip->fd, 1024, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
 		nr = gi_fip_write_blk(fip->fd, (uint8_t *)&bl31magic,
 				sizeof(bl31magic));
 		if(nr < 0) {
@@ -358,7 +393,12 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 			ret = -errno;
 			goto out;
 		}
-		lseek(fip->fd, FTE_BL31HDR_OFF(fip->nrentries), SEEK_SET);
+		off = lseek(fip->fd, FTE_BL31HDR_OFF(fip->nrentries),
+				SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
 		nr = gi_fip_write_blk(fip->fd, buf, sizeof(buf));
 		if(nr < 0) {
 			PERR("Cannot write BL31 entry header data\n");
@@ -367,7 +407,11 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		}
 	}
 
-	lseek(fdin, 0, SEEK_SET);
+	off = lseek(fdin, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	gi_fip_dump_img(fdin, fdout, BL2SZ + entry.offset);
 	fip->cursz += ROUNDUP(sz, 0x4000);
 	++fip->nrentries;
@@ -409,6 +453,7 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 		},
 	};
 	size_t i;
+	off_t off;
 	int fdin = -1, fdout = -1, tmpfd = -1, ret;
 	char fippath[] = "/tmp/fip.enc.XXXXXX";
 
@@ -470,7 +515,11 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 	if(ret < 0)
 		goto out;
 
-	lseek(tmpfd, 0, SEEK_SET);
+	off = lseek(tmpfd, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	ret = gi_fip_dump_img(tmpfd, fdout, BL2SZ);
 out:
 	if(tmpfd >= 0) {

@@ -10,6 +10,10 @@
 	fprintf(stderr, __VA_ARGS__);					\
 	perror("");							\
 } while(0)
+#define SEEK_ERR(off, ret) do {						\
+	PERR("Cannot seek file: ");					\
+	ret = (int)off;							\
+} while(0)
 #ifdef DEBUG
 #define DBG(...) printf(__VA_ARGS__)
 #else

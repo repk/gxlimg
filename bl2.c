@@ -57,6 +57,10 @@ static int gi_bl2_init(struct bl2 *bl2, int fd)
 	off_t fsz;
 
 	fsz = lseek(fd, 0, SEEK_END);
+	if(fsz < 0) {
+		PERR("Cannot seek file: ");
+		return (int)fsz;
+	}
 	bl2->payloadsz = fsz;
 	bl2->flag = 0; /* Not RSA signature support yet */
 	bl2->hash_start = BL2HDR_SZ + BL2SHA2_LEN;
@@ -122,6 +126,7 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 	uint8_t rd[BL2RAND_SZ];
 	size_t i;
 	ssize_t nr;
+	off_t off;
 
 	if(BF_IS_RSA(bl2)) {
 		ERR("BL2 RSA signature not supported yet\n");
@@ -132,7 +137,11 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 	for(i = 0; i < BL2RAND_SZ; ++i)
 		rd[i] = rand();
 
-	lseek(fd, 0, SEEK_SET);
+	off = lseek(fd, 0, SEEK_SET);
+	if(off < 0) {
+		PERR("Cannot seek file: ");
+		return (int)off;
+	}
 	bh_wr(hdr, 32, 0x00, BL2HDR_MAGIC);
 	bh_wr(hdr, 8, 0x0a, 1);
 	bh_wr(hdr, 8, 0x0b, 1);
@@ -166,23 +175,42 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 static int gi_bl2_dump_key(struct bl2 const *bl2, int fd)
 {
 	uint32_t val;
+	off_t off;
+	int ret;
+
 	if(BF_IS_RSA(bl2)) {
 		ERR("BL2 RSA signature not supported yet\n");
 		return -EINVAL;
 	}
 
-	lseek(fd, BL2RAND_SZ + BL2HDR_SZ + BL2HASH_SZ + 0x18, SEEK_SET);
+	off = lseek(fd, BL2RAND_SZ + BL2HDR_SZ + BL2HASH_SZ + 0x18, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	val = htole32(0x298);
 	gi_bl2_write_blk(fd, (uint8_t *)(&val), 4);
 
-	lseek(fd, BL2RAND_SZ + 0x8ec, SEEK_SET); /* TODO What is this offset */
+	/* TODO What is this offset */
+	off = lseek(fd, BL2RAND_SZ + 0x8ec, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	val = htole32(0x240);
 	gi_bl2_write_blk(fd, (uint8_t *)(&val), 4);
 
-	lseek(fd, BL2RAND_SZ + 0xb20, SEEK_SET); /* TODO What is this offset */
+	/* TODO What is this offset */
+	off = lseek(fd, BL2RAND_SZ + 0xb20, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	val = htole32(0x298);
 	gi_bl2_write_blk(fd, (uint8_t *)(&val), 4);
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
 static int gi_bl2_dump_binary(struct bl2 const *bl2, int fout, int fin)
@@ -190,13 +218,22 @@ static int gi_bl2_dump_binary(struct bl2 const *bl2, int fout, int fin)
 	uint8_t block[1024];
 	size_t nr;
 	ssize_t rd, wr;
+	off_t off;
 	int ret;
 
 	(void)bl2;
 
-	lseek(fin, 0, SEEK_SET);
-	lseek(fout, BL2RAND_SZ + BL2HDR_SZ + BL2HASH_SZ + BL2KEYHDR_SZ +
+	off = lseek(fin, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	off = lseek(fout, BL2RAND_SZ + BL2HDR_SZ + BL2HASH_SZ + BL2KEYHDR_SZ +
 			BL2KEY_SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 
 	for(nr = 0; nr < BL2BIN_SZ; nr += rd) {
 		rd = gi_bl2_read_blk(fin, block, sizeof(block));
@@ -224,6 +261,7 @@ static int gi_bl2_sign(struct bl2 const *bl2, int fd)
 	uint8_t hash[BL2SHA2_LEN];
 	size_t i;
 	ssize_t nr;
+	off_t off;
 	int ret;
 
 	ctx = EVP_MD_CTX_new();
@@ -239,7 +277,11 @@ static int gi_bl2_sign(struct bl2 const *bl2, int fd)
 	}
 
 	/* Hash header */
-	lseek(fd, BL2RAND_SZ, SEEK_SET);
+	off = lseek(fd, BL2RAND_SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	nr = gi_bl2_read_blk(fd, tmp, BL2HDR_SZ);
 	if((nr < 0) || (nr != BL2HDR_SZ)) {
 		PERR("Cannot read header from fd %d: ", fd);
@@ -253,7 +295,11 @@ static int gi_bl2_sign(struct bl2 const *bl2, int fd)
 	}
 
 	/* Hash payload */
-	lseek(fd, BL2RAND_SZ + bl2->hash_start, SEEK_SET);
+	off = lseek(fd, BL2RAND_SZ + bl2->hash_start, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	for(i = 0; i < bl2->hash_end - bl2->hash_start; i += nr) {
 		nr = gi_bl2_read_blk(fd, tmp, sizeof(tmp));
 		if(nr < 0) {
@@ -275,7 +321,11 @@ static int gi_bl2_sign(struct bl2 const *bl2, int fd)
 	}
 
 	/* Only SHA256 signature is supported so far */
-	lseek(fd, BL2RAND_SZ + BL2HDR_SZ, SEEK_SET);
+	off = lseek(fd, BL2RAND_SZ + BL2HDR_SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	nr = gi_bl2_write_blk(fd, hash, BL2SHA2_LEN);
 	if(nr != BL2SHA2_LEN) {
 		PERR("Cannot write SHA sig in fd %d:", fd);

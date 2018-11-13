@@ -104,14 +104,21 @@ int gi_amlcblk_init(struct amlcblk *acb, int fd)
 	size_t i, nr;
 	off_t fsz;
 	uint8_t hdr[AMLCBLKSZ];
+	int ret;
 
 	acb->flag = 0;
 	srand(time(NULL));
-	lseek(fd, 0, SEEK_SET);
+	fsz = lseek(fd, 0, SEEK_SET);
+	if(fsz < 0) {
+		SEEK_ERR(fsz, ret);
+		goto out;
+	}
+
 	nr = gi_amlcblk_read_blk(fd, hdr, sizeof(hdr));
 	if(nr != sizeof(hdr)) {
 		PERR("Cannot read input header: ");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if(bh_rd(hdr, 32, 0) == BL31_MAGIC)
@@ -119,6 +126,10 @@ int gi_amlcblk_init(struct amlcblk *acb, int fd)
 
 	acb->blksz = 0x200;
 	fsz = lseek(fd, 0, SEEK_END);
+	if(fsz < 0) {
+		SEEK_ERR(fsz, ret);
+		goto out;
+	}
 	fsz = ROUNDUP(fsz, acb->blksz);
 	if(AMLCBLK_HAS_HDR(acb))
 		fsz -= acb->blksz;
@@ -129,7 +140,9 @@ int gi_amlcblk_init(struct amlcblk *acb, int fd)
 		acb->iv[i] = rand();
 	for(i = 0; i < sizeof(acb->aeskey); ++i)
 		acb->aeskey[i] = rand();
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
 /**
@@ -147,6 +160,7 @@ static int gi_amlcblk_sha256(struct amlcblk const *acb, int fd,
 	uint8_t *tmp = NULL;
 	size_t i;
 	ssize_t nr;
+	off_t off;
 	int ret;
 
 	ctx = EVP_MD_CTX_new();
@@ -168,7 +182,12 @@ static int gi_amlcblk_sha256(struct amlcblk const *acb, int fd,
 		goto out;
 	}
 
-	lseek(fd, acb->firstblk, SEEK_SET);
+	off = lseek(fd, acb->firstblk, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
 	for(i = 0; i < acb->encsz; i += nr) {
 		nr = gi_amlcblk_read_blk(fd, tmp, acb->blksz);
 		if((nr < 0) || ((size_t)nr != acb->blksz)) {
@@ -182,8 +201,13 @@ static int gi_amlcblk_sha256(struct amlcblk const *acb, int fd,
 			SSLERR(ret, "Cannot hash data block: ");
 			goto out;
 		}
-		if(i == 0)
-			lseek(fd, acb->blksz, SEEK_SET);
+		if(i != 0)
+			continue;
+		off = lseek(fd, acb->blksz, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
 	}
 	ret = EVP_DigestFinal_ex(ctx, hash, NULL);
 	if(ret != 1) {
@@ -240,6 +264,7 @@ static int gi_amlcblk_set_desc(struct amlcblk const *acb, uint8_t buf[96])
  */
 int gi_amlcblk_dump_hdr(struct amlcblk const *acb, int fd)
 {
+	off_t off;
 	int ret;
 	uint8_t hash[32];
 	uint8_t data[AMLCBLKSZ] = {};
@@ -263,7 +288,11 @@ int gi_amlcblk_dump_hdr(struct amlcblk const *acb, int fd)
 	memcpy(data + 96, acb->iv, sizeof(acb->iv));
 	gi_amlcblk_set_desc(acb, data + 136);
 
-	lseek(fd, 0, SEEK_SET);
+	off = lseek(fd, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	ret = gi_amlcblk_write_blk(fd, data, AMLCBLKSZ);
 out:
 	return ret;
@@ -283,6 +312,7 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 	uint8_t *block = NULL, *enc = NULL;
 	size_t i;
 	ssize_t nr, wnr;
+	off_t off;
 	int ret;
 	uint8_t hdr[AMLCBLKSZ] = {};
 
@@ -321,7 +351,11 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 		goto out;
 	}
 
-	lseek(fin, 0, SEEK_SET);
+	off = lseek(fin, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	if(AMLCBLK_HAS_HDR(acb)) {
 		nr = gi_amlcblk_read_blk(fin, hdr, AMLCBLKSZ);
 		if(nr != AMLCBLKSZ) {
@@ -329,10 +363,18 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 			ret = (int)nr;
 			goto out;
 		}
-		lseek(fin, acb->blksz, SEEK_SET);
+		off = lseek(fin, acb->blksz, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
 	}
 
-	lseek(fout, AMLCBLKSZ, SEEK_SET);
+	off = lseek(fout, AMLCBLKSZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 	wnr = gi_amlcblk_write_blk(fout, hdr, AMLCBLKSZ);
 	if(wnr < 0) {
 		PERR("Cannot write header in fd %d: ", fout);
@@ -340,7 +382,11 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 		goto out;
 	}
 
-	lseek(fout, acb->firstblk, SEEK_SET);
+	off = lseek(fout, acb->firstblk, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
 
 	/* Encrypt each binary block and write them in boot image */
 	for(i = 0; i < acb->payloadsz; i += nr) {
@@ -369,8 +415,13 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 			goto out;
 		}
 
-		if(i == 0)
-			lseek(fout, nr, SEEK_SET);
+		if(i != 0)
+			continue;
+		off = lseek(fout, nr, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
 	}
 	ret = EVP_EncryptFinal_ex(ctx, enc, (int *)&nr);
 	if(ret != 1) {
