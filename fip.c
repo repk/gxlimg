@@ -265,7 +265,7 @@ static inline int fip_init(struct fip *fip)
 static inline void fip_cleanup(struct fip *fip)
 {
 	close(fip->fd);
-	remove(fip->path);
+	(void)remove(fip->path);
 }
 
 /**
@@ -475,7 +475,7 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 out:
 	if(tmpfd >= 0) {
 		close(tmpfd);
-		remove(fippath);
+		(void)remove(fippath);
 	}
 	if(fdout >= 0)
 		close(fdout);
