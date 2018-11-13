@@ -38,7 +38,8 @@ $(BUILDDIR)/$(FIPARCHIVE):
 	curl -L https://github.com/BayLibre/u-boot/releases/download/v2017.11-libretech-cc/$(FIPARCHIVE) -o $(BUILDDIR)/$(FIPARCHIVE)
 
 fip-clean:
-	if [ -d "$(BUILDDIR)/fip" ]; then rm -r "$(BUILDDIR)/fip"; fi
+	@(rm -r $(BUILDDIR)/fip 2>/dev/null && \
+		echo "rm -rf $(BUILDDIR)/fip") || true
 
 ifdef FIP
 fip: fip-clean
