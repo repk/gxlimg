@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include <sys/stat.h>
+
 #include "gxlimg.h"
 #include "fip.h"
 #include "amlcblk.h"
@@ -63,6 +65,25 @@ static ssize_t gi_fip_write_blk(int fd, uint8_t *blk, size_t sz)
 	nr = i;
 out:
 	return nr;
+}
+
+/**
+ * Safely create a temporary file
+ *
+ * @param path: Path of temporary file, should ends with 6 X. On success those
+ * X will be replaced with the unique file suffix created.
+ * @return: fd on success, negative number otherwise
+ */
+static int gi_fip_create_tmp(char *path)
+{
+	mode_t oldmask;
+	int fd;
+
+	oldmask = umask(S_IXUSR | S_IRWXG | S_IRWXO);
+	fd = mkstemp(path);
+	(void)umask(oldmask);
+
+	return fd;
 }
 
 /**
@@ -202,7 +223,7 @@ static inline int fip_init(struct fip *fip)
 	strncpy(fip->path, FIP_TEMPPATH, sizeof(fip->path));
 	fip->cursz = FIP_SZ;
 	fip->nrentries = 0;
-	fip->fd = mkstemp(fip->path);
+	fip->fd = gi_fip_create_tmp(fip->path);
 	if(fip->fd < 0) {
 		PERR("Cannot create fip temp: ");
 		return -errno;
@@ -433,7 +454,7 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 			goto out;
 	}
 
-	tmpfd = mkstemp(fippath);
+	tmpfd = gi_fip_create_tmp(fippath);
 	if(tmpfd < 0)
 		goto out;
 
