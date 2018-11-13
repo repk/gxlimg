@@ -337,6 +337,10 @@ int gi_bl2_create_img(char const *fin, char const *fout)
 
 	ret = gi_bl2_sign(&bl2, fdout);
 out:
+	if(fdin >= 0)
+		close(fdin);
+	if(fdout >= 0)
+		close(fdout);
 	return ret;
 }
 
