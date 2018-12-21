@@ -89,7 +89,7 @@ out:
 static void gi_amlcblk_blk_pad(struct amlcblk const *acb, uint8_t *blk,
 		size_t off)
 {
-	memset(blk, 0, acb->blksz - off);
+	memset(blk + off, 0, acb->blksz - off);
 }
 
 /**
