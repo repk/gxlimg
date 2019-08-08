@@ -13,24 +13,25 @@
 
 #define FOUT_MODE_DFT (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 
-#define htole8(val) (val)
-#define le8toh(val) (val)
+#define htole8(val)	(val)
+#define le8toh(val)	(val)
 #define bh_wr(h, sz, off, val)						\
 	(*(uint ## sz ## _t *)((h) + off) = htole ## sz(val))
 #define bh_rd(h, sz, off)						\
 	(le ## sz ## toh(*(uint ## sz ## _t *)((h) + off)))
 
-#define BL2IMG_TOTSZ (0xc000)
-#define BL2RAND_SZ 0x10
-#define BL2HDR_SZ 0x40
-#define BL2HASH_SZ 0x200
-#define BL2KEY_SZ 0xD80
-#define BL2KEYHDR_SZ 0x30
-#define BL2BIN_SZ (BL2IMG_TOTSZ -					\
-		(BL2RAND_SZ + BL2HDR_SZ + BL2HASH_SZ + BL2KEYHDR_SZ +	\
-			BL2KEY_SZ))
-#define BL2SHA2_LEN 0x20
-#define BL2HDR_MAGIC (*(uint32_t *)"@AML")
+#define BL2IMG_TOTSZ	0xc000
+#define BL2RAND_SZ	0x10
+#define BL2HDR_SZ	0x40
+#define BL2HASH_SZ	0x200
+#define BL2KEY_SZ	0xD80
+#define BL2KEYHDR_SZ	0x30
+#define BL2SHA2_LEN	0x20
+#define BL2BIN_SZ	(BL2IMG_TOTSZ -	(BL2RAND_SZ + BL2HDR_SZ +	\
+			 BL2HASH_SZ + BL2KEYHDR_SZ + BL2KEY_SZ))
+
+#define BL2HDR_MAGIC	(*(uint32_t *)"@AML")
+
 /**
  * BL2 binary file context
  */
@@ -144,20 +145,20 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 		return (int)off;
 	}
 	bh_wr(hdr, 32, 0x00, BL2HDR_MAGIC);
-	bh_wr(hdr, 8, 0x0a, 1);
-	bh_wr(hdr, 8, 0x0b, 1);
-	bh_wr(hdr, 16, 0x08, BL2HDR_SZ);
-	bh_wr(hdr, 32, 0x10, 0); /* SHA256 signature, no RSA */
-	bh_wr(hdr, 32, 0x20, 0); /* Null RSA KEY type */
-	bh_wr(hdr, 32, 0x28, BL2KEYHDR_SZ + BL2KEY_SZ);
-	bh_wr(hdr, 32, 0x18, BL2HASH_SZ);
-	bh_wr(hdr, 32, 0x14, BL2HDR_SZ); /* HDR size */
-	bh_wr(hdr, 16, 0x1c, bl2->hash_start); /* Beginning of hashed payload */
-	bh_wr(hdr, 16, 0x24, BL2HDR_SZ + BL2HASH_SZ); /* RSA KEY Offset */
-	bh_wr(hdr, 16, 0x38, BL2BIN_SZ);
-	bh_wr(hdr, 16, 0x34, BL2HDR_SZ + BL2HASH_SZ + BL2KEYHDR_SZ + BL2KEY_SZ); /* Payload offset */
 	bh_wr(hdr, 16, 0x04, bl2->totlen);
+	bh_wr(hdr, 16, 0x08, BL2HDR_SZ);
+	bh_wr(hdr, 8,  0x0a, 1);
+	bh_wr(hdr, 8,  0x0b, 1);
+	bh_wr(hdr, 32, 0x10, 0); /* SHA256 signature, no RSA */
+	bh_wr(hdr, 32, 0x14, BL2HDR_SZ); /* HDR size */
+	bh_wr(hdr, 32, 0x18, BL2HASH_SZ);
+	bh_wr(hdr, 16, 0x1c, bl2->hash_start); /* Beginning of hashed payload */
+	bh_wr(hdr, 32, 0x20, 0); /* Null RSA KEY type */
+	bh_wr(hdr, 16, 0x24, BL2HDR_SZ + BL2HASH_SZ); /* RSA KEY Offset */
+	bh_wr(hdr, 32, 0x28, BL2KEYHDR_SZ + BL2KEY_SZ);
 	bh_wr(hdr, 16, 0x2c, bl2->hash_end);
+	bh_wr(hdr, 16, 0x34, BL2HDR_SZ + BL2HASH_SZ + BL2KEYHDR_SZ + BL2KEY_SZ); /* Payload offset */
+	bh_wr(hdr, 16, 0x38, BL2BIN_SZ);
 
 	nr = gi_bl2_write_blk(fd, rd, sizeof(rd));
 	if(nr != sizeof(rd)) {
