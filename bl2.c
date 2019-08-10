@@ -20,15 +20,13 @@
 #define bh_rd(h, sz, off)						\
 	(le ## sz ## toh(*(uint ## sz ## _t *)((h) + off)))
 
-#define BL2IMG_SZ	0xc000
+#define BL2HDR_SZ	0x1000
 #define BL2IV_SZ	0x10
 #define BL2BLKHDR_SZ	0x40
 #define BL2SIG_SZ	0x200
 #define BL2KEY_SZ	0xD80
 #define BL2KEYHDR_SZ	0x30
 #define BL2SHA2_SZ	0x20
-#define BL2BIN_SZ	(BL2IMG_SZ -	(BL2IV_SZ + BL2BLKHDR_SZ +	\
-			 BL2SIG_SZ + BL2KEYHDR_SZ + BL2KEY_SZ))
 
 #define BL2HDR_MAGIC	(*(uint32_t *)"@AML")
 
@@ -39,7 +37,7 @@ struct bl2 {
 	size_t payloadsz;
 	size_t totlen;
 	size_t hash_start; /* Start of Hashed payload */
-	size_t hash_end; /* End of hashed payload */
+	size_t hash_size; /* Size of hashed payload */
 	uint8_t flag;
 };
 #define BF_RSA (1 << 0)
@@ -62,13 +60,15 @@ static int gi_bl2_init(struct bl2 *bl2, int fd)
 		PERR("Cannot seek file: ");
 		return (int)fsz;
 	}
+
 	bl2->payloadsz = fsz;
+	if (fsz == 0xc000) /* GXL */
+		bl2->payloadsz -= BL2HDR_SZ;
+
+	bl2->totlen = bl2->payloadsz + BL2HDR_SZ;
 	bl2->flag = 0; /* Not RSA signature support yet */
 	bl2->hash_start = BL2BLKHDR_SZ + BL2SHA2_SZ;
-	bl2->hash_end = BL2SIG_SZ + BL2KEYHDR_SZ + BL2KEY_SZ + BL2BIN_SZ -
-		BL2SHA2_SZ;
-	bl2->totlen = BL2BLKHDR_SZ + BL2SIG_SZ + BL2KEYHDR_SZ +BL2KEY_SZ +
-		BL2BIN_SZ;
+	bl2->hash_size = bl2->totlen - BL2IV_SZ - bl2->hash_start;
 
 	return 0;
 }
@@ -145,20 +145,20 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 		return (int)off;
 	}
 	bh_wr(hdr, 32, 0x00, BL2HDR_MAGIC);
-	bh_wr(hdr, 16, 0x04, bl2->totlen);
-	bh_wr(hdr, 16, 0x08, BL2BLKHDR_SZ);
+	bh_wr(hdr, 32, 0x04, bl2->totlen - BL2IV_SZ);
+	bh_wr(hdr, 8,  0x08, BL2BLKHDR_SZ);
 	bh_wr(hdr, 8,  0x0a, 1);
 	bh_wr(hdr, 8,  0x0b, 1);
 	bh_wr(hdr, 32, 0x10, 0); /* SHA256 signature, no RSA */
-	bh_wr(hdr, 32, 0x14, BL2BLKHDR_SZ); /* HDR size */
+	bh_wr(hdr, 32, 0x14, BL2BLKHDR_SZ);
 	bh_wr(hdr, 32, 0x18, BL2SIG_SZ);
-	bh_wr(hdr, 16, 0x1c, bl2->hash_start); /* Beginning of hashed payload */
+	bh_wr(hdr, 32, 0x1c, bl2->hash_start); /* Beginning of hashed payload */
 	bh_wr(hdr, 32, 0x20, 0); /* Null RSA KEY type */
-	bh_wr(hdr, 16, 0x24, BL2BLKHDR_SZ + BL2SIG_SZ); /* RSA KEY Offset */
-	bh_wr(hdr, 32, 0x28, BL2KEYHDR_SZ + BL2KEY_SZ);
-	bh_wr(hdr, 16, 0x2c, bl2->hash_end);
-	bh_wr(hdr, 16, 0x34, BL2BLKHDR_SZ + BL2SIG_SZ + BL2KEYHDR_SZ + BL2KEY_SZ); /* Payload offset */
-	bh_wr(hdr, 16, 0x38, BL2BIN_SZ);
+	bh_wr(hdr, 32, 0x24, BL2BLKHDR_SZ + BL2SIG_SZ); /* RSA KEY Offset */
+	bh_wr(hdr, 32, 0x28, BL2HDR_SZ - BL2IV_SZ - BL2BLKHDR_SZ - BL2SIG_SZ);
+	bh_wr(hdr, 32, 0x2c, bl2->hash_size);
+	bh_wr(hdr, 32, 0x34, BL2HDR_SZ - BL2IV_SZ); /* Payload offset */
+	bh_wr(hdr, 32, 0x38, bl2->totlen - BL2HDR_SZ);
 
 	nr = gi_bl2_write_blk(fd, rd, sizeof(rd));
 	if(nr != sizeof(rd)) {
@@ -227,21 +227,18 @@ static int gi_bl2_dump_binary(struct bl2 const *bl2, int fout, int fin)
 	off_t off;
 	int ret;
 
-	(void)bl2;
-
 	off = lseek(fin, 0, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
 	}
-	off = lseek(fout, BL2IV_SZ + BL2BLKHDR_SZ + BL2SIG_SZ + BL2KEYHDR_SZ +
-			BL2KEY_SZ, SEEK_SET);
+	off = lseek(fout, BL2HDR_SZ, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
 	}
 
-	for(nr = 0; nr < BL2BIN_SZ; nr += rd) {
+	for(nr = 0; nr < bl2->payloadsz; nr += rd) {
 		rd = gi_bl2_read_blk(fin, block, sizeof(block));
 		if(rd <= 0) {
 			ret = (int)rd;
@@ -306,7 +303,7 @@ static int gi_bl2_sign(struct bl2 const *bl2, int fd)
 		SEEK_ERR(off, ret);
 		goto out;
 	}
-	for(i = 0; i < bl2->hash_end - bl2->hash_start; i += nr) {
+	for(i = 0; i < bl2->hash_size; i += nr) {
 		nr = gi_bl2_read_blk(fd, tmp, sizeof(tmp));
 		if(nr < 0) {
 			PERR("Cannot read fd %d:", fd);
@@ -375,7 +372,7 @@ int gi_bl2_create_img(char const *fin, char const *fout)
 		goto out;
 
 	/* Fill the whole file with zeros */
-	ret = ftruncate(fdout, bl2.totlen + BL2IV_SZ);
+	ret = ftruncate(fdout, bl2.totlen);
 	if(ret < 0)
 		goto out;
 
