@@ -342,7 +342,7 @@ out:
 	return ret;
 }
 
-int gi_bl2_create_img(char const *fin, char const *fout)
+int gi_bl2_sign_img(char const *fin, char const *fout)
 {
 	struct bl2 bl2;
 	int fdin = -1, fdout = -1, ret;
