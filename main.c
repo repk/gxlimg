@@ -18,7 +18,8 @@
  */
 enum gi_act {
 	GA_INVAL,
-	GA_BLCREATE,
+	GA_BLSIGN,
+	GA_BLENC,
 	GA_BLEXTRACT,
 	GA_FIPIMG,
 };
@@ -29,7 +30,7 @@ enum gi_act {
 enum gi_type {
 	GT_INVAL,
 	GT_BL2,
-	GT_BL3,
+	GT_BL3X,
 };
 
 /**
@@ -98,13 +99,15 @@ static void usage(char const *progname)
 	ERR("\t%s [OPTION] <fin> <fout>\n", progname);
 	ERR("\t%s -t fip [OPTION] <fout>\n\n", progname);
 	ERR("\t-t, --type\n");
-	ERR("\t\ttype of <fin> file (bl2 or bl3 or fip)\n");
-	ERR("\n\tbl2 and bl3 options :\n");
+	ERR("\t\ttype of <fin> file (bl2 or bl3x or fip)\n");
+	ERR("\n\tbl2 and bl3x options :\n");
 	ERR("\t---------------------\n");
 	ERR("\t-e, --extract\n");
 	ERR("\t\textract and decode a binary image from <fin> boot image\n");
-	ERR("\t-c, --create\n");
-	ERR("\t\tcreate and encode a boot image from <fin> binary image\n");
+	ERR("\t-s, --sign\n");
+	ERR("\t\tsign a boot image from <fin> binary image\n");
+	ERR("\t-c, --encrypt\n");
+	ERR("\t\tcreate and encrypt a boot image from <fin> binary image\n");
 	ERR("\n\tfip options :\n");
 	ERR("\t--------------\n");
 	ERR("\t--bl2\n");
@@ -118,21 +121,38 @@ static void usage(char const *progname)
 }
 
 /**
- * Create a bootloader boot image ready to be flashed onto a SD card
+ * Sign a bootloader boot image ready to be flashed onto a SD card
  *
  * @param gopt: Boot image creating options
  * @return: 0 on success, negative number otherwise
  */
-static int gi_create_img(struct gi_opt *gopt)
+static int gi_sign_img(struct gi_opt *gopt)
 {
 	int ret = -1;
 
 	switch(gopt->blopt.type) {
 	case GT_BL2:
-		ret = gi_bl2_create_img(gopt->blopt.fin, gopt->blopt.fout);
+		ret = gi_bl2_sign_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
-	case GT_BL3:
-		ret = gi_bl3_create_img(gopt->blopt.fin, gopt->blopt.fout);
+	default:
+		break;
+	}
+	return ret;
+}
+
+/**
+ * Encrypt a bootloader boot image ready to be flashed onto a SD card
+ *
+ * @param gopt: Boot image creating options
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_encrypt_img(struct gi_opt *gopt)
+{
+	int ret = -1;
+
+	switch(gopt->blopt.type) {
+	case GT_BL3X:
+		ret = gi_bl3_encrypt_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
 	default:
 		break;
@@ -187,7 +207,13 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = 't',
 		},
 		{
-			.name = "create",
+			.name = "sign",
+			.has_arg = 0,
+			.flag = NULL,
+			.val = 's',
+		},
+		{
+			.name = "enc",
 			.has_arg = 0,
 			.flag = NULL,
 			.val = 'c',
@@ -232,13 +258,13 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	GI_BLOPT_INIT(&blopt);
 	GI_FIPOPT_INIT(&fipopt);
 
-	while((ret = getopt_long(argc, argv, "ect:", opt, &idx)) != -1) {
+	while((ret = getopt_long(argc, argv, "ecst:", opt, &idx)) != -1) {
 		switch(ret) {
 		case 't':
 			if(strcmp(optarg, "bl2") == 0) {
 				blopt.type = GT_BL2;
-			} else if(strcmp(optarg, "bl3") == 0) {
-				blopt.type = GT_BL3;
+			} else if(strcmp(optarg, "bl3x") == 0) {
+				blopt.type = GT_BL3X;
 			} else if(strcmp(optarg, "fip") == 0) {
 				gopt->act = GA_FIPIMG;
 			} else {
@@ -247,8 +273,11 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 				goto out;
 			}
 			break;
+		case 's':
+			gopt->act = GA_BLSIGN;
+			break;
 		case 'c':
-			gopt->act = GA_BLCREATE;
+			gopt->act = GA_BLENC;
 			break;
 		case 'e':
 			gopt->act = GA_BLEXTRACT;
@@ -306,8 +335,11 @@ int main(int argc, char *argv[])
 	}
 
 	switch(opt.act) {
-	case GA_BLCREATE:
-		ret = gi_create_img(&opt);
+	case GA_BLSIGN:
+		ret = gi_sign_img(&opt);
+		break;
+	case GA_BLENC:
+		ret = gi_encrypt_img(&opt);
 		break;
 	case GA_BLEXTRACT:
 		ret = gi_extract(&opt);

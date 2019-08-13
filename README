@@ -55,21 +55,21 @@ can follow those steps below.
   Follow instructions from here https://github.com/BayLibre/u-boot that build
   vendor u-boot in order to get BL* binaries.
 
-2) Encrypt BL2:
+2) Sign BL2:
 
-  Use gxlimg as below to encrypt BL2 binary along with its DDR initialization
+  Use gxlimg as below to sign BL2 binary along with its DDR initialization
   datas:
 
    $ ./fip/blx_fix.sh fip/gxl/bl2_acs.bin zero_tmp fip/gxl/bl2_zero.bin \
      fip/gxl/bl21.bin fip/gxl/bl21_zero.bin bl2_new.bin bl2
-   $ gxlimg -t bl2 -c bl2_new.bin bl2.bin.enc
+   $ gxlimg -t bl2 -s bl2_new.bin bl2.bin.enc
 
 3) Encrypt BL3*:
 
   Use the following to encrypt BL3* binary
 
-   $ gxlimg -t bl3 -c ./fip/gxl/bl30_new.bin bl30.bin.enc
-   $ gxlimg -t bl3 -c ./fip/gxl/bl31.img bl31.img.enc
+   $ gxlimg -t bl3x -c ./fip/gxl/bl30_new.bin bl30.bin.enc
+   $ gxlimg -t bl3x -c ./fip/gxl/bl31.img bl31.img.enc
 
 4) Compile u-boot:
 
@@ -85,7 +85,7 @@ can follow those steps below.
 
   Encrypt the previously built u-boot image:
 
-   $ gxlimg -t bl3 -c u-boot.bin u-boot.bin.enc
+   $ gxlimg -t bl3x -c u-boot.bin u-boot.bin.enc
 
 6) Create the final boot image:
 

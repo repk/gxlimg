@@ -59,7 +59,7 @@ $(BUILDDIR)/fip/gxl/bl2_new.bin: $(BUILDDIR)/fip/gxl/bl2_acs.bin fip
 		$(BUILDDIR)/fip/gxl/bl21_zero.bin $@ bl2
 
 $(BUILDDIR)/fip/gxl/bl2.bin.enc: $(BUILDDIR)/fip/gxl/bl2_new.bin $(PROG)
-	./$(PROG) -t bl2 -c $< $@
+	./$(PROG) -t bl2 -s $< $@
 
 $(BUILDDIR)/fip/gxl/bl30_new.bin: fip
 	$(BUILDDIR)/fip/blx_fix.sh $(BUILDDIR)/fip/gxl/bl30.bin zero_tmp \
@@ -67,14 +67,14 @@ $(BUILDDIR)/fip/gxl/bl30_new.bin: fip
 	$(BUILDDIR)/fip/gxl/bl301_zero.bin $@ bl30
 
 $(BUILDDIR)/fip/gxl/bl30.bin.enc: $(BUILDDIR)/fip/gxl/bl30_new.bin $(PROG)
-	./$(PROG) -t bl3 -c $< $@
+	./$(PROG) -t bl3x -c $< $@
 
 $(BUILDDIR)/fip/gxl/bl31.bin.enc: fip $(PROG)
-	./$(PROG) -t bl3 -c $(BUILDDIR)/fip/gxl/bl31.img $@
+	./$(PROG) -t bl3x -c $(BUILDDIR)/fip/gxl/bl31.img $@
 
 $(BUILDDIR)/fip/gxl/u-boot.bin.enc: $(PROG) $(UBOOT)
 ifdef UBOOT
-	./$(PROG) -t bl3 -c "$(UBOOT)" $@
+	./$(PROG) -t bl3x -c "$(UBOOT)" $@
 else
 	$(error UBOOT variable is missing)
 endif

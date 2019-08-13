@@ -19,7 +19,7 @@
  * @param fout: Path of BL3 boot image output file
  * @return: 0 on success, negative number otherwise
  */
-int gi_bl3_create_img(char const *fin, char const *fout)
+int gi_bl3_encrypt_img(char const *fin, char const *fout)
 {
 	struct amlcblk acb;
 	int fdin = -1, fdout = -1, ret;
