@@ -31,6 +31,7 @@ enum gi_type {
 	GT_INVAL,
 	GT_BL2,
 	GT_BL3X,
+	GT_BL30,
 };
 
 /**
@@ -99,7 +100,7 @@ static void usage(char const *progname)
 	ERR("\t%s [OPTION] <fin> <fout>\n", progname);
 	ERR("\t%s -t fip [OPTION] <fout>\n\n", progname);
 	ERR("\t-t, --type\n");
-	ERR("\t\ttype of <fin> file (bl2 or bl3x or fip)\n");
+	ERR("\t\ttype of <fin> file (bl2 or bl30 or bl3x or fip)\n");
 	ERR("\n\tbl2 and bl3x options :\n");
 	ERR("\t---------------------\n");
 	ERR("\t-e, --extract\n");
@@ -132,6 +133,7 @@ static int gi_sign_img(struct gi_opt *gopt)
 
 	switch(gopt->blopt.type) {
 	case GT_BL2:
+	case GT_BL30:
 		ret = gi_bl2_sign_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
 	default:
@@ -265,6 +267,8 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 				blopt.type = GT_BL2;
 			} else if(strcmp(optarg, "bl3x") == 0) {
 				blopt.type = GT_BL3X;
+			} else if(strcmp(optarg, "bl30") == 0) {
+				blopt.type = GT_BL30;
 			} else if(strcmp(optarg, "fip") == 0) {
 				gopt->act = GA_FIPIMG;
 			} else {
