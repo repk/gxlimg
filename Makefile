@@ -3,7 +3,7 @@ LD := $(CROSS_COMPILE)gcc
 CFLAGS ?= -W -Wall -std=gnu99 -D_GNU_SOURCE
 LDFLAGS ?= -lssl -lcrypto
 
-SRC := main.c bl2.c bl3.c amlcblk.c fip.c
+SRC := main.c bl2.c bl3.c amlcblk.c amlsblk.c fip.c
 OBJ := $(SRC:%.c=%.o)
 BUILDDIR := build
 DEPENDS := $(OBJ:%.o=$(BUILDDIR)/%.d)
