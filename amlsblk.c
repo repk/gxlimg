@@ -355,6 +355,7 @@ int gi_amlsblk_init(struct amlsblk *asb, int fd)
 	asb->totsz = ROUNDUP(fsz + BL3xHDR_SZ, asb->blksz);
 	asb->hashsz = (asb->totsz - BL3xHDR_SZ);
 	asb->topad = asb->hashsz - asb->payloadsz;
+	ret = 0;
 
 out:
 	return ret;
