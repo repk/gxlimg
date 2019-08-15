@@ -136,6 +136,9 @@ static int gi_sign_img(struct gi_opt *gopt)
 	case GT_BL30:
 		ret = gi_bl2_sign_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
+	case GT_BL3X:
+		ret = gi_bl3_sign_img(gopt->blopt.fin, gopt->blopt.fout);
+		break;
 	default:
 		break;
 	}

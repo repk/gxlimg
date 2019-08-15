@@ -9,11 +9,65 @@
 #include "gxlimg.h"
 #include "bl3.h"
 #include "amlcblk.h"
+#include "amlsblk.h"
 
 #define FOUT_MODE_DFT (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 
 /**
- * Create a BL3 boot image
+ * Sign a BL3 boot image
+ *
+ * @param fin: Path of BL3 binary input file
+ * @param fout: Path of BL3 boot image output file
+ * @return: 0 on success, negative number otherwise
+ */
+int gi_bl3_sign_img(char const *fin, char const *fout)
+{
+	struct amlsblk asb;
+	int fdin = -1, fdout = -1, ret;
+
+	DBG("Sign bl3x %s in %s\n", fin, fout);
+
+	fdin = open(fin, O_RDONLY);
+	if(fdin < 0) {
+		PERR("Cannot open file %s", fin);
+		ret = -errno;
+		goto out;
+	}
+
+	fdout = open(fout, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+	if(fdout < 0) {
+		PERR("Cannot open file %s", fout);
+		ret = -errno;
+		goto out;
+	}
+
+	ret = ftruncate(fdout, 0);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_amlsblk_init(&asb, fdin);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_amlsblk_hash_payload(&asb, fdin);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_amlsblk_build_header(&asb);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_amlsblk_flush_data(&asb, fdin, fdout);
+out:
+	if(fdout >= 0)
+		close(fdout);
+	if(fdin >= 0)
+		close(fdin);
+	return ret;
+}
+
+/**
+ * Encrypt a BL3 boot image
  *
  * @param fin: Path of BL3 binary input file
  * @param fout: Path of BL3 boot image output file
