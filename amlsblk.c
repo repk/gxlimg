@@ -307,6 +307,7 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 	ret = 0;
 out:
 	EVP_MD_CTX_free(ctx);
+	free(block);
 	return ret;
 }
 
