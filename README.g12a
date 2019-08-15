@@ -1,0 +1,41 @@
+WiP support for G12a
+====================
+
+Completed:
+- BL2 signing
+- BL30/BL31/BL32 signing
+
+WiP:
+- BL33 signing (lz4 compression)
+- FIP
+
+TODO (when completed):
+- Refactor code to merge common functions
+- Change name
+- Integrate README
+
+Commands equivalence with aml_encrypt
+-------------------------------------
+
+gxlimg -t bl2 -s bl2_new.bin bl2.n.bin.sig
+aml_encrypt --bl2sig  --input bl2_new.bin --output bl2.n.bin.sig
+
+gxlimg -t bl30 -s bl30_new.bin bl30_new.bin.g12.enc
+aml_encrypt --bl30sig --input bl30_new.bin --output bl30_new.bin.g12.enc --level v3
+
+gxlimg -t bl3x -s bl30_new.bin.g12.enc bl30_new.bin.enc
+aml_encrypt --bl3sig  --input bl30_new.bin.g12.enc --output bl30_new.bin.enc --level v3 --type bl30
+
+gxlimg -t bl3x -s bl31.img bl31.img.sig.enc
+aml_encrypt --bl3sig  --input bl31.img --output bl31.img.enc --level v3 --type bl3
+
+gxlimg -t bl3x -s bl32.img bl32.img.enc
+aml_encrypt --bl3sig  --input bl32.img --output bl32.img.enc --level v3 --type bl32
+
+Known limitations
+-----------------
+
+To be able to sign BL31 and BL32 we are stripping the IMG header to extract
+the BIN payload. The IMG header contains some info that is used in the FIP
+header even though it seems that this is not vital. TBD if that's important or
+not.
