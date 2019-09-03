@@ -3,10 +3,10 @@ WiP support for G12a
 
 Completed:
 - BL2 signing
-- BL30/BL31/BL32 signing
+- BL30/BL31/BL32/BL33 signing
 
 WiP:
-- BL33 signing (lz4 compression)
+- lz4 compression for BL33
 - FIP
 
 TODO (when completed):
@@ -31,6 +31,9 @@ aml_encrypt --bl3sig  --input bl31.img --output bl31.img.enc --level v3 --type b
 
 gxlimg -t bl3x -s bl32.img bl32.img.enc
 aml_encrypt --bl3sig  --input bl32.img --output bl32.img.enc --level v3 --type bl32
+
+gxlimg -t bl3x -s u-boot.bin bl33.bin.enc
+aml_encrypt --bl3sig  --input u-boot.bin --output bl33.bin.enc --level v3 --type bl33
 
 Known limitations
 -----------------
