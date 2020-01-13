@@ -6,6 +6,7 @@
 #include <endian.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <linux/limits.h>
 
 #include <sys/stat.h>
 
@@ -95,6 +96,7 @@ enum FIP_BOOT_IMG {
 	FBI_BL31,
 	FBI_BL32,
 	FBI_BL33,
+	FBI_UNKNOWN,
 };
 
 typedef uint8_t uuid_t[16];
@@ -124,6 +126,26 @@ static uuid_t const uuid_list[] = {
 		0x97, 0x82, 0x99, 0x34, 0xf2, 0x34, 0xb6, 0xe4
 	},
 };
+
+/**
+ * Get FIP image type from its uuid
+ *
+ * @param uuid: UUID to find image type from
+ * @return: FIP image type if found FIP_UNKNOWN otherwise
+ */
+static enum FIP_BOOT_IMG uuid_get_type(uuid_t uuid)
+{
+	size_t i;
+
+	for(i = 0; i < ARRAY_SIZE(uuid_list); ++i)
+		if(memcmp(uuid_list[i], uuid, sizeof(uuid_list[i])) == 0)
+			goto out;
+
+	i = FBI_UNKNOWN;
+
+out:
+	return (enum FIP_BOOT_IMG)i;
+}
 
 /**
  * FIP header structure
@@ -281,6 +303,122 @@ static inline void fip_cleanup(struct fip *fip)
 }
 
 /**
+ * Binary file info found in FIP ToC entry
+ */
+struct fip_entry_info {
+	enum FIP_BOOT_IMG type;
+	size_t offset;
+	size_t size;
+};
+
+/**
+ * List of binaries file info found in FIP ToC
+ */
+#define MAX_FIP_FILE 10
+struct fip_toc_info {
+	size_t nr_files;
+	struct fip_entry_info files[MAX_FIP_FILE];
+};
+
+/**
+ * Read a fip header from image
+ *
+ * @param fip: fill up with FIP informations
+ * @param fd: FIP image to read header from
+ * @return: 0 on success, negative number otherwise
+ */
+static int fip_read_toc(struct fip_toc_info *toc, int fd)
+{
+	struct fip_toc_header tochdr;
+	struct fip_toc_entry entry;
+	ssize_t nr;
+	size_t i;
+	off_t off;
+	enum FIP_BOOT_IMG type;
+	int ret;
+
+	off = lseek(fd, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	/* Verify FIP TOC header first */
+	ret = gi_fip_read_blk(fd, (uint8_t *)&tochdr, sizeof(tochdr));
+	if(ret < 0) {
+		PERR("Cannot read FIP header\n");
+		ret = -errno;
+		goto out;
+	}
+
+	if(memcmp((uint8_t *)&tochdr, (uint8_t *)FIP_TOC_HEADER,
+				sizeof(tochdr)) != 0) {
+		ERR("Invalid FIP Header\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/* Now read table of content entries */
+	for(i = 0; i < ARRAY_SIZE(toc->files); ++i) {
+		nr = gi_fip_read_blk(fd, (uint8_t *)&entry, sizeof(entry));
+		if(nr <= 0) {
+			PERR("Cannot read TOC entry\n");
+			ret = -errno;
+			goto out;
+		}
+		type = uuid_get_type(entry.uuid);
+		if(type == FBI_UNKNOWN)
+			break;
+		toc->files[i].type = type;
+		toc->files[i].offset = entry.offset;
+		toc->files[i].size = entry.size;
+	}
+
+	toc->nr_files = i;
+	ret = 0;
+out:
+	return ret;
+}
+
+/**
+ * Copy part of a file as-is in another file at specific offset
+ *
+ * @param fdin: Src file to copy
+ * @param fdout: Dest file to copy into
+ * @param size: Maximum size to copy from fdin
+ * @return: actual number of bytes copied from fdin on success, negative number
+ * otherwise.
+ */
+static ssize_t gi_copy_file(int fdin, int fdout, size_t len)
+{
+	ssize_t nrd, nwr, tot;
+	uint8_t block[512];
+
+	tot = 0;
+	do {
+		nrd = gi_fip_read_blk(fdin, block,
+				MIN(len - tot, sizeof(block)));
+		if(nrd < 0)
+			continue;
+		nwr = gi_fip_write_blk(fdout, block, nrd);
+		if(nwr < 0) {
+			PERR("Cannot write to file\n");
+			tot = -errno;
+			goto out;
+		}
+		tot += nrd;
+	} while((nrd > 0) && ((size_t)tot < len));
+
+	if(nrd < 0) {
+		PERR("Cannot read file\n");
+		tot = -errno;
+		goto out;
+	}
+out:
+	return tot;
+}
+
+/**
  * Copy a file as-is in another file at specific offset
  *
  * @param fdin: Src file to copy
@@ -290,10 +428,9 @@ static inline void fip_cleanup(struct fip *fip)
  */
 static int gi_fip_dump_img(int fdin, int fdout, size_t off)
 {
-	ssize_t nrd, nwr;
+	ssize_t len;
 	off_t o;
 	int ret;
-	uint8_t block[512];
 
 	o = lseek(fdout, off, SEEK_SET);
 	if(o < 0) {
@@ -301,23 +438,10 @@ static int gi_fip_dump_img(int fdin, int fdout, size_t off)
 		goto out;
 	}
 
-	do {
-		nrd = gi_fip_read_blk(fdin, block, sizeof(block));
-		if(nrd < 0)
-			continue;
-		nwr = gi_fip_write_blk(fdout, block, nrd);
-		if(nwr < 0) {
-			PERR("Cannot write to file\n");
-			ret = -errno;
-			goto out;
-		}
-	} while(nrd > 0);
+	len = gi_copy_file(fdin, fdout, (size_t)-1);
+	if(len < 0)
+		ret = (int)len;
 
-	if(nrd < 0) {
-		PERR("Cannot read file\n");
-		ret = -errno;
-		goto out;
-	}
 	ret = 0;
 out:
 	return ret;
@@ -380,6 +504,10 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		goto out;
 	}
 
+	/*
+	 * BL31 binary store information about load address and entry point in
+	 * the FIP data
+	 */
 	if(le32toh(*(uint32_t *)buf) == BL31_MAGIC) {
 		off = lseek(fip->fd, 1024, SEEK_SET);
 		if(off < 0) {
@@ -532,5 +660,256 @@ out:
 		close(fdin);
 	fip_cleanup(&fip);
 exit:
+	return ret;
+}
+
+/**
+ * Extract bl2 binary from an Amlogic bootable image
+ *
+ * @param fdin: Amlogic bootable image
+ * @param dir: Output directory
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_fip_extract_bl2(int fdin, char const *dir)
+{
+	int fdout = -1, ret;
+	char path[PATH_MAX];
+
+	ret = snprintf(path, sizeof(path) - 1, "%s/%s", dir, "bl2.sign");
+	if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+		ERR("Filename too long");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	fdout = open(path, O_WRONLY | O_CREAT, FOUT_MODE_DFT);
+	if(fdout < 0) {
+		PERR("Cannot open file %s", path);
+		ret = -errno;
+		goto out;
+	}
+
+	ret = gi_copy_file(fdin, fdout, BL2SZ);
+	if(ret < 0) {
+		ERR("Cannot extract BL2 from fip\n");
+		goto out;
+	}
+	if(ret < BL2SZ) {
+		ERR("BL2 is too small\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	ret = 0;
+
+out:
+	if(fdout >= 0)
+		close(fdout);
+	return ret;
+}
+
+/**
+ * Extract FIP decode it and read ToC from an Amlogic bootable image
+ *
+ * @param toc: Filled up with FIP ToC infos
+ * @param fdin: Amlogic bootable image
+ * @param dir: Output directory
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_fip_extract_fip(struct fip_toc_info *toc, int fdin,
+		char const *dir)
+{
+	struct amlcblk acb;
+	char path[PATH_MAX];
+	int fip_enc = -1, fip = -1, ret;
+	ssize_t off;
+
+	/* Read Amlogic control block */
+	off = lseek(fdin, BL2SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	ret = gi_amlcblk_read_hdr(&acb, fdin);
+	if(ret < 0)
+		goto out;
+
+	ret = snprintf(path, sizeof(path) - 1, "%s/%s", dir, "fip.enc");
+	if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+		ERR("Filename too long");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	fip_enc = open(path, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+	if(fip_enc < 0) {
+		PERR("Cannot open file %s", path);
+		ret = -errno;
+		goto out;
+	}
+
+	off = lseek(fdin, BL2SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	ret = gi_copy_file(fdin, fip_enc, FIP_SZ);
+	if(ret < 0) {
+		ERR("Cannot extract encrypted fip from boot image\n");
+		goto out;
+	}
+	if(ret < FIP_SZ) {
+		ERR("Encrypted fip is too small\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = snprintf(path, sizeof(path) - 1, "%s/%s", dir, "fip");
+	if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+		ERR("Filename too long");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	fip = open(path, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+	if(fip < 0) {
+		PERR("Cannot open file %s", path);
+		ret = -errno;
+		goto out;
+	}
+
+	ret = gi_amlcblk_aes_dec(&acb, fip, fip_enc);
+	if(ret != 0) {
+		ERR("Cannot decode FIP header");
+		goto out;
+	}
+
+	ret = fip_read_toc(toc, fip);
+	if(ret != 0) {
+		ERR("Cannot read fip");
+		goto out;
+	}
+
+out:
+	if(fip_enc >= 0)
+		close(fip_enc);
+	if(fip >= 0)
+		close(fip);
+	return ret;
+}
+
+/**
+ * Extract bl3x binaries from an Amlogic bootable image
+ *
+ * @param toc: FIP ToC infos
+ * @param fdin: Amlogic bootable image
+ * @param dir: Output directory
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
+		char const *dir)
+{
+	static char const *_fname[] = {
+		[FBI_BL30] = "bl30.enc",
+		[FBI_BL31] = "bl31.enc",
+		[FBI_BL32] = "bl32.enc",
+		[FBI_BL33] = "bl33.enc",
+	};
+	enum FIP_BOOT_IMG type;
+	char path[PATH_MAX];
+	off_t off;
+	ssize_t len;
+	size_t i;
+	int binfd = -1, ret = 0;
+
+	for(i = 0; i < toc->nr_files; ++i) {
+		type = toc->files[i].type;
+		if((type > ARRAY_SIZE(_fname)) || (_fname[type] == NULL)) {
+			DBG("Unknown binary %d\n", type);
+			continue;
+		}
+		ret = snprintf(path, sizeof(path) - 1, "%s/%s", dir,
+				_fname[type]);
+		if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+			ERR("Filename too long");
+			ret = -EINVAL;
+			goto out;
+		}
+
+		binfd = open(path, O_WRONLY | O_CREAT, FOUT_MODE_DFT);
+		if(binfd < 0) {
+			PERR("Cannot open file %s", path);
+			ret = -errno;
+			goto out;
+		}
+
+		off = lseek(fdin, BL2SZ + toc->files[i].offset, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+
+		len = gi_copy_file(fdin, binfd, toc->files[i].size);
+		if(len < 0) {
+			PERR("Cannot copy binary file %s", path);
+			ret = -errno;
+			goto out;
+		}
+		if((size_t)len != toc->files[i].size)
+			DBG("Binary file is truncated %s", path);
+		close(binfd);
+		binfd=-1;
+	}
+
+out:
+	if(binfd >= 0)
+		close(binfd);
+	return ret;
+}
+
+/**
+ * Extract encrypted binaries from an Amlogic bootable image
+ *
+ * @param fip: Amlogic bootable image
+ * @param dir: Output directory
+ * @return: 0 on success, negative number otherwise
+ */
+int gi_fip_extract(char const *fip, char const *dir)
+{
+	struct fip_toc_info toc;
+	struct stat st;
+	int fdin = -1;
+	int ret;
+
+	ret = stat(dir, &st);
+	if(ret != 0) {
+		PERR("Cannot open dir %s", dir);
+		ret = -errno;
+		goto out;
+	}
+	if((st.st_mode & S_IFDIR) == 0) {
+		ERR("%s is not a directory", dir);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	fdin = open(fip, O_RDONLY);
+	if(fdin < 0) {
+		PERR("Cannot open file %s", fip);
+		ret = -errno;
+		goto out;
+	}
+
+	ret = gi_fip_extract_bl2(fdin, dir);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_fip_extract_fip(&toc, fdin, dir);
+	if(ret < 0)
+		goto out;
+
+	ret = gi_fip_extract_bl3x(&toc, fdin, dir);
+out:
+	if(fdin > 0)
+		close(fdin);
 	return ret;
 }
