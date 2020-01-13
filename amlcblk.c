@@ -297,6 +297,55 @@ out:
 }
 
 /**
+ * Get amlogic control block header from boot image file
+ *
+ * @param acb: Amlogic control block to init from boot image
+ * @param fd: boot image file descriptor
+ * @return: 0 on success, negative number otherwise
+ */
+int gi_amlcblk_read_hdr(struct amlcblk *acb, int fd)
+{
+	ssize_t nr;
+	int ret;
+	uint8_t data[AMLCBLKSZ * 2];
+
+	bzero(acb, sizeof(*acb));
+	nr = gi_amlcblk_read_blk(fd, data, sizeof(data));
+	if(nr < 0) {
+		ret = (int)nr;
+		goto out;
+	}
+
+	ret = -EINVAL;
+	acb->blksz = bh_rd(data, 16, 2);
+	if(acb->blksz != bh_rd(data, 16, 250))
+		goto out;
+	if((uint32_t)acb->blksz != bh_rd(data, 32, 20)) /* TODO Why 32bits here ? */
+		goto out;
+	if(bh_rd(data, 16, 4))
+		AMLCBLK_SET_ENCRYPT(acb);
+	if(bh_rd(data, 32, 12) != AMLCBLK_MAGIC)
+		goto out;
+	if(bh_rd(data, 32,12) != AMLCBLK_MAGIC)
+		goto out;
+	if(bh_rd(data, 32, 252) != AMLCBLK_MAGIC)
+		goto out;
+	if(bh_rd(data, 32, 256) == BL31_MAGIC)
+		AMLCBLK_SET_HDR(acb);
+	acb->firstblk = bh_rd(data, 32, 16);
+	acb->encsz = bh_rd(data, 32, 24);
+	acb->payloadsz = bh_rd(data, 32, 28);
+	/* TODO Check hash ? */
+	memcpy(acb->aeskey, data + 64, sizeof(acb->aeskey));
+	memcpy(acb->iv, data + 96, sizeof(acb->iv));
+	/* TODO check gi_amlcblk_set_desc(acb, data + 136); */
+
+	ret = 0;
+out:
+	return ret;
+}
+
+/**
  * Encode a binary input file into a boot image output file
  *
  * @param acb: Amlogic Control Block descriptor
@@ -315,7 +364,7 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 	uint8_t hdr[AMLCBLKSZ] = {};
 
 	ret = -EINVAL;
-	if(acb->payloadsz % acb->payloadsz)
+	if(acb->payloadsz % acb->blksz)
 		goto out;
 
 	ctx = EVP_CIPHER_CTX_new();
@@ -354,6 +403,10 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 		SEEK_ERR(off, ret);
 		goto out;
 	}
+	/*
+	 * Some binary has specific header at first block to describe how to run it
+	 * (load address, entry point, etc)
+	 */
 	if(AMLCBLK_HAS_HDR(acb)) {
 		nr = gi_amlcblk_read_blk(fin, hdr, AMLCBLKSZ);
 		if(nr != AMLCBLKSZ) {
@@ -433,6 +486,147 @@ int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin)
 
 out:
 	free(enc);
+	free(block);
+	EVP_CIPHER_CTX_free(ctx);
+	return ret;
+}
+
+/**
+ * Decode a boot image output file
+ *
+ * @param acb: Amlogic Control Block descriptor
+ * @param fout: Binary output file descriptor
+ * @param fin: Boot image input file descriptor
+ * @return: 0 on success, negative number otherwise
+ */
+int gi_amlcblk_aes_dec(struct amlcblk *acb, int fout, int fin)
+{
+	EVP_CIPHER_CTX *ctx = NULL;
+	uint8_t *block = NULL, *dec = NULL;
+	size_t i;
+	ssize_t nr, wnr;
+	off_t off;
+	int ret;
+	uint8_t hdr[AMLCBLKSZ];
+
+	ret = -EINVAL;
+	if(acb->payloadsz % acb->blksz)
+		goto out;
+
+	ctx = EVP_CIPHER_CTX_new();
+	if(ctx == NULL) {
+		ret = -ERR_get_error();
+		SSLERR(ret, "Cannot create cipher context: ");
+		goto out;
+	}
+
+	ret = -ENOMEM;
+	block = malloc(acb->blksz);
+	if(block == NULL)
+		goto out;
+
+	dec = malloc(acb->blksz);
+	if(dec == NULL)
+		goto out;
+
+	ret = EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL,
+			acb->aeskey, acb->iv);
+	if(ret != 1) {
+		ret = -ERR_get_error();
+		SSLERR(ret, "Cannot init cipher context: ");
+		goto out;
+	}
+
+	ret = EVP_CIPHER_CTX_set_padding(ctx, 0);
+	if(ret != 1) {
+		ret = -ERR_get_error();
+		SSLERR(ret, "Cannot disable cipher padding: ");
+		goto out;
+	}
+
+	off = lseek(fout, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	/*
+	 * Some binary has specific header at first block to describe how to run it
+	 * (load address, entry point, etc)
+	 */
+	if(AMLCBLK_HAS_HDR(acb)) {
+		off = lseek(fin, AMLCBLKSZ, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+		nr = gi_amlcblk_read_blk(fin, hdr, AMLCBLKSZ);
+		if(nr != AMLCBLKSZ) {
+			PERR("Cannot read fin header\n");
+			ret = (int)nr;
+			goto out;
+		}
+		wnr = gi_amlcblk_write_blk(fout, hdr, AMLCBLKSZ);
+		if(wnr < 0) {
+			PERR("Cannot write header in fd %d: ", fout);
+			ret = (int)wnr;
+			goto out;
+		}
+		off = lseek(fout, acb->blksz, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+	}
+
+	off = lseek(fin, acb->firstblk, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	/* Encrypt each binary block and write them in boot image */
+	for(i = 0; i < acb->payloadsz; i += nr) {
+		nr = gi_amlcblk_read_blk(fin, block, acb->blksz);
+		if(nr <= 0) {
+			PERR("Cannot read fd %d: ", fin);
+			ret = (int)nr;
+			goto out;
+		}
+
+		nr = acb->blksz;
+		ret = EVP_DecryptUpdate(ctx, dec, (int *)&nr, block, nr);
+		if((ret != 1) || ((size_t)nr != acb->blksz)) {
+			ret = -ERR_get_error();
+			SSLERR(ret, "Cannot Encrypt block: ");
+			goto out;
+		}
+
+		wnr = gi_amlcblk_write_blk(fout, dec, acb->blksz);
+		if(wnr < 0) {
+			PERR("Cannot write into fd %d: ", fout);
+			ret = (int)wnr;
+			goto out;
+		}
+
+		if(i != 0)
+			continue;
+		off = lseek(fin, nr, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+	}
+	ret = EVP_DecryptFinal_ex(ctx, dec, (int *)&nr);
+	if(ret != 1) {
+		ret = -ERR_get_error();
+		SSLERR(ret, "Cannot finalise binary payload: ");
+		goto out;
+	}
+	ret = 0;
+
+out:
+	free(dec);
 	free(block);
 	EVP_CIPHER_CTX_free(ctx);
 	return ret;

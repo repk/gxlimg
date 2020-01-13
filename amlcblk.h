@@ -13,7 +13,9 @@ struct amlcblk {
 };
 
 int gi_amlcblk_init(struct amlcblk *acb, int fd);
+int gi_amlcblk_read_hdr(struct amlcblk *acb, int fd);
 int gi_amlcblk_dump_hdr(struct amlcblk const *acb, int fd);
 int gi_amlcblk_aes_enc(struct amlcblk *acb, int fout, int fin);
+int gi_amlcblk_aes_dec(struct amlcblk *acb, int fout, int fin);
 
 #endif
