@@ -178,6 +178,47 @@ out:
 	return ret;
 }
 
+/**
+ * Read BL2 header from image
+ *
+ * @param bl2: Filled up with BL2 header info
+ * @param fd: File to read header from
+ *
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_bl2_read_hdr(struct bl2 *bl2, int fd)
+{
+	uint8_t hdr[BL2BLKHDR_SZ];
+	off_t off;
+	int ret;
+
+	off = lseek(fd, BL2IV_SZ, SEEK_SET); /* Skip IV */
+	if(off < 0) {
+		PERR("Cannot seek file: ");
+		return (int)off;
+	}
+
+	ret = gi_bl2_read_blk(fd, hdr, sizeof(hdr));
+	if(ret < 0) {
+		ERR("Cannot get header from bl2 file\n");
+		goto out;
+	}
+
+	ret = -EINVAL;
+	if(bh_rd(hdr, 32, 0x00) != BL2HDR_MAGIC) {
+		ERR("Invalid BL2 header\n");
+		goto out;
+	}
+	bl2->totlen = bh_rd(hdr, 32, 0x04) + BL2IV_SZ;
+	bl2->hash_start = bh_rd(hdr, 32, 0x1c); /* Beginning of hashed payload */
+	bl2->hash_size = bh_rd(hdr, 32, 0x2c);
+	bl2->payloadsz = bl2->totlen - BL2HDR_SZ;
+
+	ret = 0;
+out:
+	return ret;
+}
+
 static int gi_bl2_dump_key(struct bl2 const *bl2, int fd)
 {
 	uint32_t val;
@@ -397,12 +438,74 @@ out:
 	return ret;
 }
 
-int gi_bl2_extract(char const *fin, char const *fout)
+int gi_bl2_unsign_img(char const *fin, char const *fout)
 {
-	(void)fin;
-	(void)fout;
+	struct bl2 bl2;
+	ssize_t rd, wr;
+	size_t len;
+	off_t off;
+	int fdin = -1, fdout = -1, ret;
+	uint8_t block[1024];
 
-	ERR("BL2 decoding is not implemented yet\n");
+	DBG("Extract bl2 boot image from signed %s in %s\n", fin, fout);
 
-	return -1;
+	fdin = open(fin, O_RDONLY);
+	if(fdin < 0) {
+		PERR("Cannot open file %s", fin);
+		ret = -errno;
+		goto out;
+	}
+
+	fdout = open(fout, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+	if(fdout < 0) {
+		PERR("Cannot open file %s", fout);
+		ret = -errno;
+		goto out;
+	}
+
+	ret = gi_bl2_read_hdr(&bl2, fdin);
+	if(ret != 0) {
+		ERR("Cannot get BL2 header\n");
+		goto out;
+	}
+
+	ret = ftruncate(fdout, 0);
+	if(ret < 0)
+		goto out;
+
+	off = lseek(fdin, BL2HDR_SZ, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	len = bl2.payloadsz;
+	if (len + BL2HDR_SZ == 0xc000) /* GXL */
+		len = 0xc000;
+
+	ret = ftruncate(fdout, len);
+	if(ret < 0)
+		goto out;
+
+	do {
+		rd = gi_bl2_read_blk(fdin, block, MIN(len, sizeof(block)));
+		if(rd <= 0) {
+			ret = (int)rd;
+			goto out;
+		}
+		wr = gi_bl2_write_blk(fdout, block, rd);
+		if(wr != rd) {
+			ret = (int)wr;
+			goto out;
+		}
+		len -= rd;
+	} while((rd != 0) && (len != 0));
+
+	ret = 0;
+out:
+	if(fdin >= 0)
+		close(fdin);
+	if(fdout >= 0)
+		close(fdout);
+	return ret;
 }
