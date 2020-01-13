@@ -20,6 +20,7 @@ enum gi_act {
 	GA_INVAL,
 	GA_BLSIGN,
 	GA_BLENC,
+	GA_BLDEC,
 	GA_BLDECRYPT,
 	GA_FIPIMG,
 	GA_EXTIMG,
@@ -130,7 +131,9 @@ static void usage(char const *progname)
 	ERR("\t-s, --sign\n");
 	ERR("\t\tsign a boot image from <fin> binary image\n");
 	ERR("\t-c, --encrypt\n");
-	ERR("\t\tcreate and encrypt a boot image from <fin> binary image\n");
+	ERR("\t\tcreate and encrypt a bl boot image from <fin> binary image\n");
+	ERR("\t-d, --decrypt\n");
+	ERR("\t\tdecrypt a bl boot image from <fin> store it in <fout>\n");
 	ERR("\n\tfip options :\n");
 	ERR("\t--------------\n");
 	ERR("\t--bl2\n");
@@ -170,7 +173,7 @@ static int gi_sign_img(struct gi_opt *gopt)
 /**
  * Encrypt a bootloader boot image ready to be flashed onto a SD card
  *
- * @param gopt: Boot image creating options
+ * @param gopt: Boot image options
  * @return: 0 on success, negative number otherwise
  */
 static int gi_encrypt_img(struct gi_opt *gopt)
@@ -180,6 +183,26 @@ static int gi_encrypt_img(struct gi_opt *gopt)
 	switch(gopt->blopt.type) {
 	case GT_BL3X:
 		ret = gi_bl3_encrypt_img(gopt->blopt.fin, gopt->blopt.fout);
+		break;
+	default:
+		break;
+	}
+	return ret;
+}
+
+/**
+ * Decrypt a bootloader boot image
+ *
+ * @param gopt: Boot image options
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_decrypt_img(struct gi_opt *gopt)
+{
+	int ret = -1;
+
+	switch(gopt->blopt.type) {
+	case GT_BL3X:
+		ret = gi_bl3_decrypt_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
 	default:
 		break;
@@ -242,10 +265,16 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = 's',
 		},
 		{
-			.name = "enc",
+			.name = "encrypt",
 			.has_arg = 0,
 			.flag = NULL,
 			.val = 'c',
+		},
+		{
+			.name = "decrypt",
+			.has_arg = 0,
+			.flag = NULL,
+			.val = 'd',
 		},
 		{
 			.name = "extract",
@@ -289,7 +318,7 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	GI_FIPOPT_INIT(&fipopt);
 	GI_EXTOPT_INIT(&extopt);
 
-	while((ret = getopt_long(argc, argv, "ecst:", opt, &idx)) != -1) {
+	while((ret = getopt_long(argc, argv, "ecdst:", opt, &idx)) != -1) {
 		switch(ret) {
 		case 't':
 			if(strcmp(optarg, "bl2") == 0) {
@@ -311,6 +340,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			break;
 		case 'c':
 			gopt->act = GA_BLENC;
+			break;
+		case 'd':
+			gopt->act = GA_BLDEC;
 			break;
 		case 'e':
 			gopt->act = GA_EXTIMG;
@@ -379,6 +411,9 @@ int main(int argc, char *argv[])
 		break;
 	case GA_BLENC:
 		ret = gi_encrypt_img(&opt);
+		break;
+	case GA_BLDEC:
+		ret = gi_decrypt_img(&opt);
 		break;
 	case GA_EXTIMG:
 		ret = gi_extract(&opt);
