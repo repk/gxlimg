@@ -19,6 +19,7 @@
 enum gi_act {
 	GA_INVAL,
 	GA_BLSIGN,
+	GA_BLUNSIGN,
 	GA_BLENC,
 	GA_BLDEC,
 	GA_BLDECRYPT,
@@ -130,6 +131,8 @@ static void usage(char const *progname)
 	ERR("\t\tand store them in fout directory\n");
 	ERR("\t-s, --sign\n");
 	ERR("\t\tsign a boot image from <fin> binary image\n");
+	ERR("\t-u, --unsign\n");
+	ERR("\t\tget a boot image from <fin> signed binary image\n");
 	ERR("\t-c, --encrypt\n");
 	ERR("\t\tcreate and encrypt a bl boot image from <fin> binary image\n");
 	ERR("\t-d, --decrypt\n");
@@ -163,6 +166,27 @@ static int gi_sign_img(struct gi_opt *gopt)
 		break;
 	case GT_BL3X:
 		ret = gi_bl3_sign_img(gopt->blopt.fin, gopt->blopt.fout);
+		break;
+	default:
+		break;
+	}
+	return ret;
+}
+
+/**
+ * Extract a bootloader boot image from a signed one
+ *
+ * @param gopt: Boot image creating options
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_unsign_img(struct gi_opt *gopt)
+{
+	int ret = -1;
+
+	switch(gopt->blopt.type) {
+	case GT_BL2:
+	case GT_BL30:
+		ret = gi_bl2_unsign_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
 	default:
 		break;
@@ -265,6 +289,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = 's',
 		},
 		{
+			.name = "unsign",
+			.has_arg = 0,
+			.flag = NULL,
+			.val = 'u',
+		},
+		{
 			.name = "encrypt",
 			.has_arg = 0,
 			.flag = NULL,
@@ -318,7 +348,7 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	GI_FIPOPT_INIT(&fipopt);
 	GI_EXTOPT_INIT(&extopt);
 
-	while((ret = getopt_long(argc, argv, "ecdst:", opt, &idx)) != -1) {
+	while((ret = getopt_long(argc, argv, "ecdsut:", opt, &idx)) != -1) {
 		switch(ret) {
 		case 't':
 			if(strcmp(optarg, "bl2") == 0) {
@@ -337,6 +367,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			break;
 		case 's':
 			gopt->act = GA_BLSIGN;
+			break;
+		case 'u':
+			gopt->act = GA_BLUNSIGN;
 			break;
 		case 'c':
 			gopt->act = GA_BLENC;
@@ -408,6 +441,9 @@ int main(int argc, char *argv[])
 	switch(opt.act) {
 	case GA_BLSIGN:
 		ret = gi_sign_img(&opt);
+		break;
+	case GA_BLUNSIGN:
+		ret = gi_unsign_img(&opt);
 		break;
 	case GA_BLENC:
 		ret = gi_encrypt_img(&opt);
