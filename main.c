@@ -20,8 +20,9 @@ enum gi_act {
 	GA_INVAL,
 	GA_BLSIGN,
 	GA_BLENC,
-	GA_BLEXTRACT,
+	GA_BLDECRYPT,
 	GA_FIPIMG,
+	GA_EXTIMG,
 };
 
 /**
@@ -69,6 +70,20 @@ struct gi_fipopt {
 } while(0)
 
 /**
+ * Parsed options for FIP image extraction
+ */
+struct gi_extopt {
+	char const *fip;
+	char const *dir;
+};
+#define GI_EXTOPT_INIT(go) do						\
+{									\
+	(go)->fip = NULL;						\
+	(go)->dir = NULL;						\
+} while(0)
+
+
+/**
  * Parsed options
  */
 struct gi_opt {
@@ -76,6 +91,7 @@ struct gi_opt {
 	union {
 		struct gi_blopt blopt;
 		struct gi_fipopt fipopt;
+		struct gi_extopt extopt;
 	};
 };
 #define GI_OPT_INIT(go) do						\
@@ -88,11 +104,16 @@ struct gi_opt {
 	((go)->fipopt.bl30 != NULL) && ((go)->fipopt.bl31 != NULL) &&	\
 	((go)->fipopt.bl33 != NULL) && ((go)->fipopt.fout != NULL))
 
+#define GI_EXTOPT_VALID(go)						\
+	(((go)->act == GA_EXTIMG) && ((go)->extopt.fip != NULL) &&	\
+	((go)->extopt.dir != NULL))
+
 #define GI_BLOPT_VALID(go)						\
 	(((go)->act != GA_INVAL) && ((go)->blopt.type != GT_INVAL) &&	\
 	((go)->blopt.fin != NULL) && ((go)->blopt.fout != NULL))
 
-#define GI_OPT_VALID(go) (GI_FIPOPT_VALID(go) || GI_BLOPT_VALID(go))
+#define GI_OPT_VALID(go) (GI_FIPOPT_VALID(go) || GI_EXTOPT_VALID(go) ||	\
+		GI_BLOPT_VALID(go))
 
 static void usage(char const *progname)
 {
@@ -104,7 +125,8 @@ static void usage(char const *progname)
 	ERR("\n\tbl2 and bl3x options :\n");
 	ERR("\t---------------------\n");
 	ERR("\t-e, --extract\n");
-	ERR("\t\textract and decode a binary image from <fin> boot image\n");
+	ERR("\t\textract the different binary images from <fin> boot image\n");
+	ERR("\t\tand store them in fout directory\n");
 	ERR("\t-s, --sign\n");
 	ERR("\t\tsign a boot image from <fin> binary image\n");
 	ERR("\t-c, --encrypt\n");
@@ -166,16 +188,18 @@ static int gi_encrypt_img(struct gi_opt *gopt)
 }
 
 /**
- * Extract a bootloader code from a bootloader boot image
+ * Extract all bootloader binaries from a boot image
  *
  * @param gopt: Boot image extraction options
  * @return: 0 on success, negative number otherwise
  */
 static int gi_extract(struct gi_opt *gopt)
 {
-	(void)gopt;
-	ERR("Extracting a binary bl from boot image is not implemented yet\n");
-	return -1;
+	int ret;
+
+	DBG("Extract files from FIP boot image %s\n", gopt->extopt.fip);
+	ret = gi_fip_extract(gopt->extopt.fip, gopt->extopt.dir);
+	return ret;
 }
 
 /**
@@ -256,12 +280,14 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	};
 	struct gi_blopt blopt;
 	struct gi_fipopt fipopt;
+	struct gi_extopt extopt;
 	int ret;
 	int idx;
 
 	GI_OPT_INIT(gopt);
 	GI_BLOPT_INIT(&blopt);
 	GI_FIPOPT_INIT(&fipopt);
+	GI_EXTOPT_INIT(&extopt);
 
 	while((ret = getopt_long(argc, argv, "ecst:", opt, &idx)) != -1) {
 		switch(ret) {
@@ -287,7 +313,7 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			gopt->act = GA_BLENC;
 			break;
 		case 'e':
-			gopt->act = GA_BLEXTRACT;
+			gopt->act = GA_EXTIMG;
 			break;
 		case '2':
 			fipopt.bl2 = optarg;
@@ -321,9 +347,15 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			goto out;
 		}
 
-		blopt.fin = argv[optind];
-		blopt.fout = argv[optind + 1];
-		memcpy(&gopt->blopt, &blopt, sizeof(blopt));
+		if(gopt->act == GA_EXTIMG) {
+			extopt.fip = argv[optind];
+			extopt.dir = argv[optind + 1];
+			memcpy(&gopt->extopt, &extopt, sizeof(extopt));
+		} else {
+			blopt.fin = argv[optind];
+			blopt.fout = argv[optind + 1];
+			memcpy(&gopt->blopt, &blopt, sizeof(blopt));
+		}
 	}
 
 out:
@@ -348,7 +380,7 @@ int main(int argc, char *argv[])
 	case GA_BLENC:
 		ret = gi_encrypt_img(&opt);
 		break;
-	case GA_BLEXTRACT:
+	case GA_EXTIMG:
 		ret = gi_extract(&opt);
 		break;
 	case GA_FIPIMG:
