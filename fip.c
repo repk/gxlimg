@@ -823,7 +823,7 @@ static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
 
 	for(i = 0; i < toc->nr_files; ++i) {
 		type = toc->files[i].type;
-		if((type > ARRAY_SIZE(_fname)) || (_fname[type] == NULL)) {
+		if((type >= ARRAY_SIZE(_fname)) || (_fname[type] == NULL)) {
 			DBG("Unknown binary %d\n", type);
 			continue;
 		}
