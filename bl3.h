@@ -2,7 +2,7 @@
 #define _BL3_H_
 
 int gi_bl3_encrypt_img(char const *fin, char const *fout);
-int gi_bl3_extract(char const *fin, char const *fout);
+int gi_bl3_decrypt_img(char const *fin, char const *fout);
 int gi_bl3_sign_img(char const *fin, char const *fout);
 
 #endif
