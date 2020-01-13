@@ -911,7 +911,7 @@ int gi_fip_extract(char const *fip, char const *dir)
 
 	ret = gi_fip_extract_bl3x(&toc, fdin, dir);
 out:
-	if(fdin > 0)
+	if(fdin >= 0)
 		close(fdin);
 	return ret;
 }
