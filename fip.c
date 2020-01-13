@@ -439,8 +439,10 @@ static int gi_fip_dump_img(int fdin, int fdout, size_t off)
 	}
 
 	len = gi_copy_file(fdin, fdout, (size_t)-1);
-	if(len < 0)
+	if(len < 0) {
 		ret = (int)len;
+		goto out;
+	}
 
 	ret = 0;
 out:
