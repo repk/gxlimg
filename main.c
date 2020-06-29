@@ -58,6 +58,7 @@ struct gi_blopt {
 struct gi_fipopt {
 	char const *bl2;
 	char const *bl30;
+	char const *bl301;
 	char const *bl31;
 	char const *bl33;
 	char const *fout;
@@ -66,6 +67,7 @@ struct gi_fipopt {
 {									\
 	(go)->bl2 = NULL;						\
 	(go)->bl30 = NULL;						\
+	(go)->bl301 = NULL;						\
 	(go)->bl31 = NULL;						\
 	(go)->bl33 = NULL;						\
 	(go)->fout = NULL;						\
@@ -143,6 +145,8 @@ static void usage(char const *progname)
 	ERR("\t\tBL2 boot file to add in final boot image\n");
 	ERR("\t--bl30\n");
 	ERR("\t\tBL30 boot file to add in final boot image\n");
+	ERR("\t--bl301\n");
+	ERR("\t\tBL301 optional boot file to add in final boot image\n");
 	ERR("\t--bl31\n");
 	ERR("\t\tBL31 boot file to add in final boot image\n");
 	ERR("\t--bl33\n");
@@ -261,8 +265,8 @@ static int gi_fipimg_create(struct gi_opt *gopt)
 
 	DBG("Creating final FIP boot image %s\n", gopt->fipopt.fout);
 	ret = gi_fip_create(gopt->fipopt.bl2, gopt->fipopt.bl30,
-			gopt->fipopt.bl31, gopt->fipopt.bl33,
-			gopt->fipopt.fout);
+			gopt->fipopt.bl301, gopt->fipopt.bl31,
+			gopt->fipopt.bl33, gopt->fipopt.fout);
 	return ret;
 }
 /**
@@ -325,6 +329,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = '0',
 		},
 		{
+			.name = "bl301",
+			.has_arg = 1,
+			.flag = NULL,
+			.val = '4',
+		},
+		{
 			.name = "bl31",
 			.has_arg = 1,
 			.flag = NULL,
@@ -385,6 +395,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			break;
 		case '0':
 			fipopt.bl30 = optarg;
+			break;
+		case '4':
+			fipopt.bl301 = optarg;
 			break;
 		case '1':
 			fipopt.bl31 = optarg;

@@ -565,8 +565,8 @@ out:
  * @param bl33: BL33 boot image to add
  * @return: 0 on success, negative number otherwise
  */
-int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
-		char const *bl33, char const *fout)
+int gi_fip_create(char const *bl2, char const *bl30, char const *bl301,
+		char const *bl31, char const *bl33, char const *fout)
 {
 	struct fip fip;
 	struct amlcblk acb;
@@ -577,6 +577,10 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 		{
 			.path = bl30,
 			.type = FBI_BL30,
+		},
+		{
+			.path = bl301,
+			.type = FBI_BL301,
 		},
 		{
 			.path = bl31,
@@ -622,6 +626,8 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl31,
 
 	/* Add all BL3* images */
 	for(i = 0; i < ARRAY_SIZE(fip_bin_path); ++i) {
+		if(!fip_bin_path[i].path)
+			continue;
 		close(fdin);
 		fdin = open(fip_bin_path[i].path, O_RDONLY);
 		if(fdin < 0) {
