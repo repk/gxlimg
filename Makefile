@@ -69,8 +69,12 @@ $(BUILDDIR)/fip/gxl/bl30_new.bin: fip
 $(BUILDDIR)/fip/gxl/bl30.bin.enc: $(BUILDDIR)/fip/gxl/bl30_new.bin $(PROG)
 	./$(PROG) -t bl3x -c $< $@
 
-$(BUILDDIR)/fip/gxl/bl31.bin.enc: fip $(PROG)
+$(BUILDDIR)/fip/gxl/bl31.bin.enc: fip $(PROG) $(ATF)
+ifdef ATF
+	./$(PROG) -t bl3x -c "$(ATF)" $@
+else
 	./$(PROG) -t bl3x -c $(BUILDDIR)/fip/gxl/bl31.img $@
+endif
 
 $(BUILDDIR)/fip/gxl/u-boot.bin.enc: $(PROG) $(UBOOT)
 ifdef UBOOT
