@@ -94,6 +94,23 @@ can follow those steps below.
    $ gxlimg -t fip --bl2 ./bl2.bin.enc --bl30 ./bl30.bin.enc \
      --bl31 ./bl31.img.enc --bl33 ./u-boot.bin.enc ./gxl-boot.bin
 
+II.c - Create USB boot files
+----------------------------
+
+The ROM USB Boot mode on GXL, GXM & AXG uses .usb.bl2 and .usb.tpl files to boot,
+as used by pyamlboot (https://github.com/superna9999/pyamlboot)
+
+The first binary contains the encrypted BL2 and the second the rest of the gxl-boot.bin
+
+To generate:
+
+$ dd if=gxl-boot.bin of=gxl-boot.bin.usb.bl2 bs=49152 count=1
+$ dd if=gxl-boot.bin of=gxl-boot.bin.usb.tpl skip=4915 bs=1
+
+Then copy them into files/<boardname>/u-boot.bin.usb.bl2 & files/<boardname>/u-boot.bin.usb.tpl
+in the checkout source of pyamlboot, then follow instructions at:
+https://github.com/superna9999/pyamlboot#booting-full-system-from-usb
+
 III - Write the image to the SD card
 ------------------------------------
 
