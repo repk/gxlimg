@@ -104,8 +104,8 @@ The first binary contains the encrypted BL2 and the second the rest of the gxl-b
 
 To generate:
 
-$ dd if=gxl-boot.bin of=gxl-boot.bin.usb.bl2 bs=49152 count=1
-$ dd if=gxl-boot.bin of=gxl-boot.bin.usb.tpl skip=4915 bs=1
+$ dd if=gxl-boot.bin of=u-boot.bin.usb.bl2 bs=49152 count=1
+$ dd if=gxl-boot.bin of=u-boot.bin.usb.tpl skip=49152 bs=1
 
 Then copy them into files/<boardname>/u-boot.bin.usb.bl2 & files/<boardname>/u-boot.bin.usb.tpl
 in the checkout source of pyamlboot, then follow instructions at:
