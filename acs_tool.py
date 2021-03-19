@@ -11,19 +11,19 @@ ENTRY_POINT_OFFSET = 4
 BL2_HEADER_OFFSET = 4096
 ACS_TOOL_VERSION = 1
 acs_v1 = collections.OrderedDict()
-acs_v1['acs_magic'] = 'acs__'
+acs_v1['acs_magic'] = b'acs__'
 acs_v1['chip_type'] = 1
 acs_v1['version'] = 2
 acs_v1['acs_set_length'] = 8
-acs_v1['ddr_magic'] = 'ddrs_'
+acs_v1['ddr_magic'] = b'ddrs_'
 acs_v1['ddr_set_version'] = 1
 acs_v1['ddr_set_length'] = 2
 acs_v1['ddr_set_addr'] = 8
-acs_v1['ddrt_magic'] = 'ddrt_'
+acs_v1['ddrt_magic'] = b'ddrt_'
 acs_v1['ddrt_set_version'] = 1
 acs_v1['ddrt_set_length'] = 2
 acs_v1['ddrt_set_addr'] = 8
-acs_v1['pll_magic'] = 'pll__'
+acs_v1['pll_magic'] = b'pll__'
 acs_v1['pll_set_version'] = 1
 acs_v1['pll_set_length'] = 2
 acs_v1['pll_set_addr'] = 8
@@ -45,7 +45,7 @@ class acs_tool(object):
 
     def init_acs(self, acs_struct, file_name, bl2):
         seek_position = 0
-        file_handler = file(file_name, 'r+')
+        file_handler = open(file_name, 'rb+')
         file_handler.seek(ENTRY_POINT_OFFSET)
         acs_entry_point, = unpack('H', file_handler.read(2))
         acs_entry_point -= bl2 * BL2_HEADER_OFFSET
@@ -53,18 +53,19 @@ class acs_tool(object):
         self.log_print(file_name)
         for key in acs_struct.keys():
             file_handler.seek(seek_position)
-            if isinstance(acs_struct[key], str):
+            if isinstance(acs_struct[key], bytes):
                 seek_position += len(acs_struct[key])
                 acs_struct[key] = file_handler.read(len(acs_struct[key]))
+            elif isinstance(acs_struct[key], int):
+                seek_position += acs_struct[key]
+                if 1 == acs_struct[key]:
+                    acs_struct[key], = unpack('B', file_handler.read(1))
+                else:
+                    acs_struct[key], = unpack('H', file_handler.read(2))
+                if key in check_excepts:
+                    acs_struct[key] -= bl2 * BL2_HEADER_OFFSET
             else:
-                if isinstance(acs_struct[key], int):
-                    seek_position += acs_struct[key]
-                    if 1 == acs_struct[key]:
-                        acs_struct[key], = unpack('B', file_handler.read(1))
-                    else:
-                        acs_struct[key], = unpack('H', file_handler.read(2))
-                    if key in check_excepts:
-                        acs_struct[key] -= bl2 * BL2_HEADER_OFFSET
+                raise RuntimeError("Unexpected type")
             self.log_print(key + ' ' + str(acs_struct[key]))
 
         file_handler.close()
@@ -73,24 +74,24 @@ class acs_tool(object):
         err_counter = 0
         for key in self.acs_des.keys():
             if self.acs_des[key] != self.acs_src[key] and key not in check_excepts:
-                print "Warning! ACS %s doesn't match!! %s/%s" % (key, self.acs_des[key], self.acs_src[key])
+                print("Warning! ACS %s doesn't match!! %s/%s" % (key, self.acs_des[key], self.acs_src[key]))
 
         for key in key_versions:
             if self.acs_des[key] > self.acs_src[key]:
                 self.acs_des[key] = self.acs_src[key]
-                print 'Warning! ACS src %s too old!' % key
+                print('Warning! ACS src %s too old!' % key)
 
         for key in self.acs_base.keys():
-            if isinstance(self.acs_base[key], str):
+            if isinstance(self.acs_base[key], bytes):
                 if self.acs_des[key] != self.acs_base[key]:
                     err_counter += 1
-                    print 'Error! ACS DES %s error!! Value: %s, Expect: %s' % (key, self.acs_des[key], self.acs_base[key])
+                    print('Error! ACS DES %s error!! Value: %s, Expect: %s' % (key, self.acs_des[key], self.acs_base[key]))
                 if self.acs_src[key] != self.acs_base[key]:
                     err_counter += 1
-                    print 'Error! ACS DES %s error!! Value: %s, Expect: %s' % (key, self.acs_src[key], self.acs_base[key])
+                    print('Error! ACS DES %s error!! Value: %s, Expect: %s' % (key, self.acs_src[key], self.acs_base[key]))
 
         if self.acs_des['version'] > ACS_TOOL_VERSION:
-            print 'Error! Please update acs tool! v%s>v%s' % (self.acs_des['version'], ACS_TOOL_VERSION)
+            print('Error! Please update acs tool! v%s>v%s' % (self.acs_des['version'], ACS_TOOL_VERSION))
             err_counter += 1
         return err_counter
 
@@ -107,30 +108,30 @@ class acs_tool(object):
         return 0
 
     def run(self):
-        file_des_tmp_handler = file(self.file_des_tmp, 'w+')
-        file_des_handler = file(self.file_des, 'r+')
-        file_des_tmp_handler.writelines(file_des_handler.read())
+        file_des_tmp_handler = open(self.file_des_tmp, 'wb+')
+        file_des_handler = open(self.file_des, 'rb+')
+        file_des_tmp_handler.write(file_des_handler.read())
         file_des_tmp_handler.close()
         file_des_handler.close()
         self.init_acs(self.acs_des, self.file_des_tmp, 1)
         self.init_acs(self.acs_src, self.file_src, 0)
         if self.check_acs():
-            print 'ACS check failed! Compile Abort!'
+            print('ACS check failed! Compile Abort!')
             return -1
         self.copy_data()
-        print 'ACS tool process done.'
+        print('ACS tool process done.')
 
     def log_print(self, log):
-        if self.debug:
-            print log
+        if self.debug or True:
+            print(log)
 
 
 if __name__ == '__main__':
     if sys.argv[1] == '--help' or sys.argv[1] == '-help':
-        print 'acs_tool.py [bl2.bin] [bl2_tmp.bin] [acs.bin] [debug(1/0)]'
+        print('acs_tool.py [bl2.bin] [bl2_tmp.bin] [acs.bin] [debug(1/0)]')
         exit(1)
     if len(sys.argv) != 5:
-        print 'acs_tool.py [bl2.bin] [bl2_tmp.bin] [acs.bin] [debug(1/0)]'
+        print('acs_tool.py [bl2.bin] [bl2_tmp.bin] [acs.bin] [debug(1/0)]')
         exit(1)
     tool = acs_tool(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
     if tool.run():
