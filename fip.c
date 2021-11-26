@@ -19,6 +19,15 @@
 #define BL31_ENTRY_MAGIC (0x87654321)
 #define BL31_MAGIC (0x12348765)
 #define BL2SZ (0xc000)
+#define TOC_OFFSET_V3 (0x10)
+
+/**
+ * FIP Format Revision
+ */
+enum fip_rev {
+	GI_FIP_V2,	/* GXL, GXM */
+	GI_FIP_V3,	/* G12A, G12B, SM1 */
+};
 
 /**
  * Read a block of data from a file
@@ -97,6 +106,12 @@ enum FIP_BOOT_IMG {
 	FBI_BL31,
 	FBI_BL32,
 	FBI_BL33,
+	FBI_BL2_DATA,
+	FBI_BL30_DATA,
+	FBI_BL31_DATA,
+	FBI_BL32_DATA,
+	FBI_BL33_DATA,
+	FBI_EMPTY,
 	FBI_UNKNOWN,
 };
 
@@ -130,6 +145,27 @@ static uuid_t const uuid_list[] = {
 		0xd6, 0xd0, 0xee, 0xa7, 0xfc, 0xea, 0xd5, 0x4b,
 		0x97, 0x82, 0x99, 0x34, 0xf2, 0x34, 0xb6, 0xe4
 	},
+	[FBI_BL2_DATA] = {
+		0xf4, 0x1d, 0x14, 0x86, 0xcb, 0x95, 0xe6, 0x11,
+                0x84, 0x88, 0x84, 0x2b, 0x2b, 0x01, 0xca, 0x38
+	},
+	[FBI_BL30_DATA] = {
+		0x48, 0x56, 0xcc, 0xc2, 0xcc, 0x85, 0xe6, 0x11,
+                0xa5, 0x36, 0x3c, 0x97, 0x0e, 0x97, 0xa0, 0xee
+	},
+	[FBI_BL31_DATA] = {
+		0xca, 0xaf, 0xb0, 0x33, 0xce, 0x85, 0xe6, 0x11,
+                0x8c, 0x32, 0x00, 0x22, 0x19, 0xc7, 0x77, 0x2f
+	},
+	[FBI_BL32_DATA] = {
+		0x34, 0xa1, 0x48, 0xb8, 0xbc, 0x90, 0xe6, 0x11,
+                0x8f, 0xef, 0xa4, 0xba, 0xdb, 0x19, 0xde, 0x03
+	},
+	[FBI_BL33_DATA] = {
+		0x8e, 0x59, 0xd6 ,0x5d, 0x5e, 0x8b, 0xe6, 0x11,
+                0xbc, 0xb5, 0xf0, 0xde, 0xf1, 0x83, 0x72, 0x96,
+	},
+	[FBI_EMPTY] = {},
 };
 
 /**
@@ -330,9 +366,12 @@ struct fip_toc_info {
  *
  * @param fip: fill up with FIP informations
  * @param fd: FIP image to read header from
+ * @param rev: FIP Format revision
+ * @param bl2sz: BL2 Size
  * @return: 0 on success, negative number otherwise
  */
-static int fip_read_toc(struct fip_toc_info *toc, int fd)
+static int fip_read_toc(struct fip_toc_info *toc, int fd, enum fip_rev rev,
+		size_t bl2sz)
 {
 	struct fip_toc_header tochdr;
 	struct fip_toc_entry entry;
@@ -342,7 +381,8 @@ static int fip_read_toc(struct fip_toc_info *toc, int fd)
 	enum FIP_BOOT_IMG type;
 	int ret;
 
-	off = lseek(fd, 0, SEEK_SET);
+	off = lseek(fd, rev == GI_FIP_V3 ? bl2sz + TOC_OFFSET_V3 : 0,
+			SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
@@ -372,9 +412,11 @@ static int fip_read_toc(struct fip_toc_info *toc, int fd)
 			goto out;
 		}
 		type = uuid_get_type(entry.uuid);
+		toc->files[i].type = type;
+		if(type == FBI_EMPTY)
+			continue;
 		if(type == FBI_UNKNOWN)
 			break;
-		toc->files[i].type = type;
 		toc->files[i].offset = entry.offset;
 		toc->files[i].size = entry.size;
 	}
@@ -681,9 +723,10 @@ exit:
  *
  * @param fdin: Amlogic bootable image
  * @param dir: Output directory
+ * @param bl2sz: BL2 Size
  * @return: 0 on success, negative number otherwise
  */
-static int gi_fip_extract_bl2(int fdin, char const *dir)
+static int gi_fip_extract_bl2(int fdin, char const *dir, int bl2sz)
 {
 	int fdout = -1, ret;
 	char path[PATH_MAX];
@@ -702,12 +745,12 @@ static int gi_fip_extract_bl2(int fdin, char const *dir)
 		goto out;
 	}
 
-	ret = gi_copy_file(fdin, fdout, BL2SZ);
+	ret = gi_copy_file(fdin, fdout, bl2sz);
 	if(ret < 0) {
 		ERR("Cannot extract BL2 from fip\n");
 		goto out;
 	}
-	if(ret < BL2SZ) {
+	if(ret < bl2sz) {
 		ERR("BL2 is too small\n");
 		ret = -EINVAL;
 		goto out;
@@ -726,6 +769,7 @@ out:
  * @param toc: Filled up with FIP ToC infos
  * @param fdin: Amlogic bootable image
  * @param dir: Output directory
+ * @param rev: FIP Format revision
  * @return: 0 on success, negative number otherwise
  */
 static int gi_fip_extract_fip(struct fip_toc_info *toc, int fdin,
@@ -796,7 +840,7 @@ static int gi_fip_extract_fip(struct fip_toc_info *toc, int fdin,
 		goto out;
 	}
 
-	ret = fip_read_toc(toc, fip);
+	ret = fip_read_toc(toc, fip, GI_FIP_V2, BL2SZ);
 	if(ret != 0) {
 		ERR("Cannot read fip");
 		goto out;
@@ -816,10 +860,11 @@ out:
  * @param toc: FIP ToC infos
  * @param fdin: Amlogic bootable image
  * @param dir: Output directory
+ * @param bl2sz: BL2 Size
  * @return: 0 on success, negative number otherwise
  */
 static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
-		char const *dir)
+		char const *dir, int bl2sz)
 {
 	static char const *_fname[] = {
 		[FBI_BL30] = "bl30.enc",
@@ -827,6 +872,11 @@ static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
 		[FBI_BL31] = "bl31.enc",
 		[FBI_BL32] = "bl32.enc",
 		[FBI_BL33] = "bl33.enc",
+		[FBI_BL2_DATA] = "bl2.dat",
+		[FBI_BL30_DATA] = "bl30.dat",
+		[FBI_BL31_DATA] = "bl31.dat",
+		[FBI_BL32_DATA] = "bl32.dat",
+		[FBI_BL33_DATA] = "bl33.dat",
 	};
 	enum FIP_BOOT_IMG type;
 	char path[PATH_MAX];
@@ -837,6 +887,8 @@ static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
 
 	for(i = 0; i < toc->nr_files; ++i) {
 		type = toc->files[i].type;
+		if (type == FBI_EMPTY)
+			continue;
 		if((type >= ARRAY_SIZE(_fname)) || (_fname[type] == NULL)) {
 			DBG("Unknown binary %d\n", type);
 			continue;
@@ -856,7 +908,7 @@ static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
 			goto out;
 		}
 
-		off = lseek(fdin, BL2SZ + toc->files[i].offset, SEEK_SET);
+		off = lseek(fdin, bl2sz + toc->files[i].offset, SEEK_SET);
 		if(off < 0) {
 			SEEK_ERR(off, ret);
 			goto out;
@@ -881,6 +933,68 @@ out:
 }
 
 /**
+ * Determine the FIP version and BL2 size
+ *
+ * @param fdin: Amlogic bootable image file descriptor
+ * @param rev: FIP Format revision
+ * @param bl2sz: BL2 Size
+ * @return: 0 on success, negative number otherwise
+ */
+int gi_fip_check(int fdin, enum fip_rev *rev, size_t *bl2sz)
+{
+	struct fip_toc_header tochdr;
+	static size_t known_sizes[] = {
+		BL2SZ, 0x10000, 0
+	};
+	int size_id = 0;
+	off_t off;
+	int ret;
+
+	/* Default to V2 values */
+	*rev = GI_FIP_V2;
+	*bl2sz = BL2SZ;
+
+	while (known_sizes[size_id]) {
+		/* Check if v3 */
+		off = lseek(fdin, known_sizes[size_id] + TOC_OFFSET_V3,
+				SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+
+		/* Verify FIP TOC header first */
+		ret = gi_fip_read_blk(fdin, (uint8_t *)&tochdr,
+					sizeof(tochdr));
+		if(ret < 0) {
+			PERR("Cannot read FIP header\n");
+			ret = -errno;
+			goto out;
+		}
+
+		if(!memcmp((uint8_t *)&tochdr, (uint8_t *)FIP_TOC_HEADER,
+					sizeof(tochdr))) {
+			DBG("Detected FIP v3 format at offset 0x%lx\n",
+				known_sizes[size_id] + TOC_OFFSET_V3);
+			*rev = GI_FIP_V3;
+			*bl2sz = known_sizes[size_id];
+			break;
+		}
+
+		size_id++;
+	}
+
+	off = lseek(fdin, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+out:
+	return ret;
+}
+
+/**
  * Extract encrypted binaries from an Amlogic bootable image
  *
  * @param fip: Amlogic bootable image
@@ -890,6 +1004,8 @@ out:
 int gi_fip_extract(char const *fip, char const *dir)
 {
 	struct fip_toc_info toc;
+	enum fip_rev rev = GI_FIP_V2;
+	size_t bl2sz = BL2SZ;
 	struct stat st;
 	int fdin = -1;
 	int ret;
@@ -913,15 +1029,24 @@ int gi_fip_extract(char const *fip, char const *dir)
 		goto out;
 	}
 
-	ret = gi_fip_extract_bl2(fdin, dir);
+	ret = gi_fip_check(fdin, &rev, &bl2sz);
+	if (ret < 0) {
+		PERR("Cannot check FIP revision\n");
+		goto out;
+	}
+
+	ret = gi_fip_extract_bl2(fdin, dir, bl2sz);
 	if(ret < 0)
 		goto out;
 
-	ret = gi_fip_extract_fip(&toc, fdin, dir);
+	if (rev == GI_FIP_V3)
+		ret = fip_read_toc(&toc, fdin, rev, bl2sz);
+	else
+		ret = gi_fip_extract_fip(&toc, fdin, dir);
 	if(ret < 0)
 		goto out;
 
-	ret = gi_fip_extract_bl3x(&toc, fdin, dir);
+	ret = gi_fip_extract_bl3x(&toc, fdin, dir, bl2sz);
 out:
 	if(fdin >= 0)
 		close(fdin);
