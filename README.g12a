@@ -4,10 +4,10 @@ WiP support for G12a
 Completed:
 - BL2 signing
 - BL30/BL31/BL32/BL33 signing
+- FIP
 
 WiP:
 - lz4 compression for BL33
-- FIP
 
 TODO (when completed):
 - Refactor code to merge common functions
@@ -23,6 +23,7 @@ aml_encrypt --bl2sig  --input bl2_new.bin --output bl2.n.bin.sig
 gxlimg -t bl30 -s bl30_new.bin bl30_new.bin.g12.enc
 aml_encrypt --bl30sig --input bl30_new.bin --output bl30_new.bin.g12.enc --level v3
 
+# For a reason to be determined, this step is useless, using bl30_new.bin.g12.enc for FIP is fine
 gxlimg -t bl3x -s bl30_new.bin.g12.enc bl30_new.bin.enc
 aml_encrypt --bl3sig  --input bl30_new.bin.g12.enc --output bl30_new.bin.enc --level v3 --type bl30
 
@@ -34,6 +35,9 @@ aml_encrypt --bl3sig  --input bl32.img --output bl32.img.enc --level v3 --type b
 
 gxlimg -t bl3x -s u-boot.bin bl33.bin.enc
 aml_encrypt --bl3sig  --input u-boot.bin --output bl33.bin.enc --level v3 --type bl33
+
+gxlimg -t fip --bl2 bl2.n.bin.sig --ddrfw ddr4_1d.fw --ddrfw ddr4_2d.fw --ddrfw ddr3_1d.fw --ddrfw piei.fw --ddrfw lpddr4_1d.fw --ddrfw lpddr4_2d.fw --ddrfw diag_lpddr4.fw --ddrfw aml_ddr.fw --ddrfw lpddr3_1d.fw --bl30 bl30_new.bin.g12.enc --bl31 bl31.img.sig.enc --bl33 bl33.bin.enc --rev v3 gxl-boot.bin
+aml_encrypt --bootmk --output u-boot.bin --level v3 --bl2 bl2.n.bin.sig --bl30 bl30_new.bin.enc --bl31 bl31.img.enc --bl33 bl33.bin.enc --ddrfw1 ddr4_1d.fw --ddrfw2 ddr4_2d.fw --ddrfw3 ddr3_1d.fw --ddrfw4 piei.fw --ddrfw5 lpddr4_1d.fw --ddrfw6 lpddr4_2d.fw --ddrfw7 diag_lpddr4.fw --ddrfw8 aml_ddr.fw --ddrfw9 lpddr3_1d.fw
 
 Known limitations
 -----------------

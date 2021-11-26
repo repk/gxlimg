@@ -33,6 +33,7 @@ enum gi_act {
 enum gi_type {
 	GT_INVAL,
 	GT_BL2,
+	GT_DDRFW,
 	GT_BL3X,
 	GT_BL30,
 };
@@ -53,24 +54,35 @@ struct gi_blopt {
 } while(0)
 
 /**
+ * Maximum number of DDR Firmwares
+ */
+#define MAX_DDRFW	9
+
+/**
  * Parsed options for FIP image creation
  */
 struct gi_fipopt {
 	char const *bl2;
+	char const *ddrfw[MAX_DDRFW];
+	unsigned int ddrfw_count;
 	char const *bl30;
 	char const *bl301;
 	char const *bl31;
 	char const *bl33;
 	char const *fout;
+	char const *rev;
 };
 #define GI_FIPOPT_INIT(go) do						\
 {									\
 	(go)->bl2 = NULL;						\
+	memset(&(go)->ddrfw, 0, sizeof((go)->ddrfw));			\
+	(go)->ddrfw_count = 0;						\
 	(go)->bl30 = NULL;						\
 	(go)->bl301 = NULL;						\
 	(go)->bl31 = NULL;						\
 	(go)->bl33 = NULL;						\
 	(go)->fout = NULL;						\
+	(go)->rev = NULL;						\
 } while(0)
 
 /**
@@ -143,6 +155,8 @@ static void usage(char const *progname)
 	ERR("\t--------------\n");
 	ERR("\t--bl2\n");
 	ERR("\t\tBL2 boot file to add in final boot image\n");
+	ERR("\t--ddrfw\n");
+	ERR("\t\tDDR Firmware(s) file(s) to add in final boot image\n");
 	ERR("\t--bl30\n");
 	ERR("\t\tBL30 boot file to add in final boot image\n");
 	ERR("\t--bl301\n");
@@ -151,6 +165,8 @@ static void usage(char const *progname)
 	ERR("\t\tBL31 boot file to add in final boot image\n");
 	ERR("\t--bl33\n");
 	ERR("\t\tBL31 boot file to add in final boot image\n");
+	ERR("\t--rev\n");
+	ERR("\t\tFIP format revision (v2 or v3)\n");
 }
 
 /**
@@ -264,9 +280,11 @@ static int gi_fipimg_create(struct gi_opt *gopt)
 	int ret;
 
 	DBG("Creating final FIP boot image %s\n", gopt->fipopt.fout);
-	ret = gi_fip_create(gopt->fipopt.bl2, gopt->fipopt.bl30,
+	ret = gi_fip_create(gopt->fipopt.bl2, gopt->fipopt.ddrfw,
+			gopt->fipopt.ddrfw_count, gopt->fipopt.bl30,
 			gopt->fipopt.bl301, gopt->fipopt.bl31,
-			gopt->fipopt.bl33, gopt->fipopt.fout);
+			gopt->fipopt.bl33, gopt->fipopt.fout,
+			gopt->fipopt.rev);
 	return ret;
 }
 /**
@@ -323,6 +341,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = '2',
 		},
 		{
+			.name = "ddrfw",
+			.has_arg = 1,
+			.flag = NULL,
+			.val = '6',
+		},
+		{
 			.name = "bl30",
 			.has_arg = 1,
 			.flag = NULL,
@@ -345,6 +369,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.has_arg = 1,
 			.flag = NULL,
 			.val = '3',
+		},
+		{
+			.name = "rev",
+			.has_arg = 1,
+			.flag = NULL,
+			.val = '5',
 		},
 	};
 	struct gi_blopt blopt;
@@ -393,6 +423,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 		case '2':
 			fipopt.bl2 = optarg;
 			break;
+		case '6':
+			fipopt.ddrfw[fipopt.ddrfw_count++] = optarg;
+			break;
 		case '0':
 			fipopt.bl30 = optarg;
 			break;
@@ -404,6 +437,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			break;
 		case '3':
 			fipopt.bl33 = optarg;
+			break;
+		case '5':
+			fipopt.rev = optarg;
 			break;
 		case '?':
 			goto out;

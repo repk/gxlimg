@@ -13,13 +13,17 @@
 #include "gxlimg.h"
 #include "fip.h"
 #include "amlcblk.h"
+#include "ssl.h"
 
 #define FOUT_MODE_DFT (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 
 #define BL31_ENTRY_MAGIC (0x87654321)
 #define BL31_MAGIC (0x12348765)
+#define AMLSBLK_KEY_MAGIC	(*(uint32_t *)"@KEY")
 #define BL2SZ (0xc000)
 #define TOC_OFFSET_V3 (0x10)
+
+#define SHA2_SZ (0x20)
 
 /**
  * FIP Format Revision
@@ -188,6 +192,43 @@ out:
 	return (enum FIP_BOOT_IMG)i;
 }
 
+#define FT_DATA_SIZE (0x468)
+/**
+ * Image fixed data for V3, usage & meaning is unknown
+ * We find some similar data in bl32.img header
+ * Probably used for secure boot
+ */
+static uint8_t const uuid_data[][FT_DATA_SIZE] = {
+	[FBI_BL2_DATA] =  {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00
+		/* Rest is 0x0 */
+	},
+	[FBI_BL30_DATA] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x10, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x10, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x20, 0x00,
+		/* Rest is 0x0 */
+	},
+	[FBI_BL31_DATA] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x30, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x30, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x30, 0x05, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x40, 0x01,
+		/* Rest is 0x0 */
+	},
+	[FBI_BL32_DATA] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00
+		/* Rest is 0x0 */
+	},
+	[FBI_BL33_DATA] = {},
+};
+#define FT_DATA_START (0x188)
+
 /**
  * FIP header structure
  */
@@ -276,7 +317,7 @@ struct fip {
  * @param fip: FIP handler to init
  * @return: 0 on success, negative number otherwise
  */
-static inline int fip_init(struct fip *fip)
+static inline int fip_init(struct fip *fip, enum fip_rev rev)
 {
 	unsigned long long init = 0xffffffffffffffffULL;
 	ssize_t nr;
@@ -294,37 +335,66 @@ static inline int fip_init(struct fip *fip)
 		goto out;
 	}
 
-	ret = ftruncate(fip->fd, FIP_SZ - 0x200);
-	if(ret < 0) {
-		PERR("Cannot truncate fip toc header: ");
-		close(fip->fd);
-		ret = -errno;
-		goto out;
-	}
-
-	nr = gi_fip_write_blk(fip->fd, (uint8_t *)FIP_TOC_HEADER,
-			sizeof(*FIP_TOC_HEADER));
-	if(nr < 0) {
-		PERR("Cannot write fip toc header: ");
-		close(fip->fd);
-		ret = -errno;
-		goto out;
-	}
-
-	/* End of toc entry */
-	off = lseek(fip->fd, 0xc00, SEEK_SET);
-	if(off < 0) {
-		SEEK_ERR(off, ret);
-		goto out;
-	}
-	for(i = 0; i < 0x80 / sizeof(init); ++i) {
-		nr = gi_fip_write_blk(fip->fd, (uint8_t *)&init, sizeof(init));
-		if(nr < 0) {
-			PERR("Cannot write fip toc last entry: ");
+	switch (rev) {
+	case GI_FIP_V2:
+		ret = ftruncate(fip->fd, FIP_SZ - 0x200);
+		if(ret < 0) {
+			PERR("Cannot truncate fip toc header: ");
 			close(fip->fd);
 			ret = -errno;
 			goto out;
 		}
+
+		nr = gi_fip_write_blk(fip->fd, (uint8_t *)FIP_TOC_HEADER,
+				sizeof(*FIP_TOC_HEADER));
+		if(nr < 0) {
+			PERR("Cannot write fip toc header: ");
+			close(fip->fd);
+			ret = -errno;
+			goto out;
+		}
+
+		/* End of toc entry */
+		off = lseek(fip->fd, 0xc00, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+		for(i = 0; i < 0x80 / sizeof(init); ++i) {
+			nr = gi_fip_write_blk(fip->fd, (uint8_t *)&init,
+					sizeof(init));
+			if(nr < 0) {
+				PERR("Cannot write fip toc last entry: ");
+				close(fip->fd);
+				ret = -errno;
+				goto out;
+			}
+		}
+		break;
+	case GI_FIP_V3:
+		ret = ftruncate(fip->fd, FIP_SZ - SHA2_SZ);
+		if(ret < 0) {
+			PERR("Cannot truncate fip toc header: ");
+			close(fip->fd);
+			ret = -errno;
+			goto out;
+		}
+
+		off = lseek(fip->fd, TOC_OFFSET_V3, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+
+		nr = gi_fip_write_blk(fip->fd, (uint8_t *)FIP_TOC_HEADER,
+				sizeof(*FIP_TOC_HEADER));
+		if(nr < 0) {
+			PERR("Cannot write fip toc header: ");
+			close(fip->fd);
+			ret = -errno;
+			goto out;
+		}
+		break;
 	}
 	ret = 0;
 
@@ -503,9 +573,11 @@ out:
  * @param fdout: Final boot image file
  * @param fdin: Bootloader image to add
  * @param type: Type of bootloader image
+ * @param rev: FIP Format revision
+ * @param bl2sz: BL2 Image Size
  */
 static int gi_fip_add(struct fip *fip, int fdout, int fdin,
-		enum FIP_BOOT_IMG type)
+		enum FIP_BOOT_IMG type, enum fip_rev rev, size_t bl2sz)
 {
 	static uint32_t const bl31magic[] = {
 		BL31_ENTRY_MAGIC,
@@ -514,22 +586,52 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 	struct fip_toc_entry entry;
 	size_t sz;
 	ssize_t nr;
+	size_t skip = 0;
 	off_t off;
 	int ret;
 	uint8_t buf[FTE_BL31HDR_SZ];
 
-	off = lseek(fdin, 0, SEEK_END);
-	if(off < 0) {
-		SEEK_ERR(off, ret);
-		goto out;
-	}
-	sz = (size_t)off;
+	if (fdin >= 0) {
+		off = lseek(fdin, 0, SEEK_END);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+		sz = (size_t)off;
+
+		/* Detect a AMLSBLK image a skip header if found on V3 */
+		if (rev == GI_FIP_V3) {
+			off = lseek(fdin, 0, SEEK_SET);
+			if(off < 0) {
+				SEEK_ERR(off, ret);
+				goto out;
+			}
+
+			nr = gi_fip_read_blk(fdin, buf, 4);
+			if(nr <= 0) {
+				PERR("Cannot read BL image entry\n");
+				ret = -errno;
+				goto out;
+			}
+
+			if (le32toh(*(uint32_t *)buf) == AMLSBLK_KEY_MAGIC) {
+				skip = 0x490;
+				sz -= skip;
+			}
+		}
+	} else
+		sz = 0;
+
 	memcpy(entry.uuid, uuid_list[type], sizeof(entry.uuid));
 	entry.offset = fip->cursz;
 	entry.flags = 0;
 	entry.size = sz;
 
-	off = lseek(fip->fd, FTE_OFF(fip->nrentries), SEEK_SET);
+	off = FTE_OFF(fip->nrentries);
+	if (rev == GI_FIP_V3)
+		off += TOC_OFFSET_V3;
+	
+	off = lseek(fip->fd, off, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
@@ -540,6 +642,10 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		ret = -errno;
 		goto out;
 	}
+
+	/* Skip writting data if file is not available */
+	if (!sz)
+		goto nofdin;
 
 	off = lseek(fdin, 256, SEEK_SET);
 	if(off < 0) {
@@ -584,17 +690,377 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		}
 	}
 
-	off = lseek(fdin, 0, SEEK_SET);
+	off = lseek(fdin, skip, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
 	}
-	gi_fip_dump_img(fdin, fdout, BL2SZ + entry.offset);
+	gi_fip_dump_img(fdin, fdout, bl2sz + entry.offset);
 	fip->cursz += ROUNDUP(sz, 0x4000);
+
+nofdin:
 	++fip->nrentries;
 	ret = 0;
 
 out:
+	return ret;
+}
+
+/**
+ * Add a bootloader image data in boot image TOC
+ *
+ * @param fip: Fip handler
+ * @param type: Type of bootloader image data
+ * @param index: Index of bootloader image data
+ */
+static int gi_fip_data_add(struct fip *fip, enum FIP_BOOT_IMG type,
+			unsigned int index)
+{
+	struct fip_toc_entry entry;
+	ssize_t nr;
+	off_t off;
+	int ret;
+
+	memcpy(entry.uuid, uuid_list[type], sizeof(entry.uuid));
+	entry.offset = FT_DATA_START + (index * FT_DATA_SIZE);
+	entry.flags = 0;
+	entry.size = FT_DATA_SIZE;
+
+	off = lseek(fip->fd, TOC_OFFSET_V3 + FTE_OFF(fip->nrentries),
+			SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	nr = gi_fip_write_blk(fip->fd, (uint8_t *)&entry,
+				sizeof(entry));
+	if(nr < 0) {
+		PERR("Cannot write FIP entry\n");
+		ret = -errno;
+		goto out;
+	}
+
+	off = lseek(fip->fd, entry.offset, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	nr = gi_fip_write_blk(fip->fd, (uint8_t *)&uuid_data[type],
+			FT_DATA_SIZE);
+	if(nr < 0) {
+		PERR("Cannot write FIP data entry\n");
+		ret = -errno;
+		goto out;
+	}
+
+	++fip->nrentries;
+	ret = 0;
+
+out:
+	return ret;
+}
+
+/**
+ * DDRFW header structure
+ */
+#pragma pack(push, 1)
+struct fip_ddrfw_toc_header {
+	/**
+	 * DDRFW magic
+	 */
+	uint32_t magic;
+	/**
+	 * DDR Firmware count
+	 */
+	uint32_t count;
+	/**
+	 * Flags, reserved for later use
+	 */
+	uint64_t flags;
+};
+#pragma pack(pop)
+#define DDRFW_MAGIC (0x4d464440)
+#define FIP_DDRFW_TOC_HEADER(ddrfw_count)				\
+	{								\
+		.magic = htole32(DDRFW_MAGIC),				\
+		.count = htole32(ddrfw_count),				\
+		.flags = 0						\
+	}
+#define DDRFW_OFF (0x1790)
+
+/**
+ * Initialize the DDR firmware TOC
+ *
+ * @param fip: Fip handler
+ * @param ddrfw_count: Number of DDR firmwares
+ */
+static int gi_fip_ddrfw_init(struct fip *fip, unsigned int ddrfw_count)
+{
+	struct fip_ddrfw_toc_header toc = FIP_DDRFW_TOC_HEADER(ddrfw_count);
+	ssize_t nr;
+	off_t off;
+	int ret = 0;
+
+	off = lseek(fip->fd, DDRFW_OFF, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	nr = gi_fip_write_blk(fip->fd, (uint8_t *)&toc,	sizeof(toc));
+	if(nr < 0) {
+		PERR("Cannot write fip toc header: ");
+		close(fip->fd);
+		ret = -errno;
+		goto out;
+	}
+
+out:
+	return ret;
+}
+
+/**
+ * DDRFW entry structure
+ */
+#pragma pack(push, 1)
+struct fip_ddrfw_toc_entry {
+	/**
+	 * DDRFW magic
+	 */
+	uint8_t magic[8];
+	/**
+	 * DDRFW offset
+	 */
+	uint32_t offset;
+	/**
+	 * DDRFW size
+	 */
+	uint32_t size;
+	/**
+	 * DDRFW properties
+	 */
+	uint8_t props[16];
+	/**
+	 * DDRFW hash
+	 */
+	uint8_t hash[SHA2_SZ];
+};
+#pragma pack(pop)
+
+#define FTE_DDRFW_OFF(i)						\
+	(DDRFW_OFF + sizeof(struct fip_ddrfw_toc_header) + 		\
+	 (i * sizeof(struct fip_ddrfw_toc_entry)))
+
+/**
+ * Add a DDR Firmware data in boot image TOC
+ *
+ * @param fip: Fip handler
+ * @param fdout: Final boot image file
+ * @param fdin: Bootloader image to add
+ * @param index: Index of DDR Firmware
+ * @param bl2sz: Size of BL2 image
+ */
+static int gi_fip_ddrfw_add(struct fip *fip, int fdout, int fdin,
+		size_t index, size_t bl2sz)
+{
+	struct fip_ddrfw_toc_entry entry;
+	uint8_t tmp[1024];
+	EVP_MD_CTX *ctx;
+	size_t sz;
+	ssize_t nr;
+	off_t off;
+	size_t i;
+	int ret;
+
+	ctx = EVP_MD_CTX_new();
+	if(ctx == NULL) {
+		SSLERR(ret, "Cannot create digest context: ");
+		goto out;
+	}
+
+	ret = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+	if(ret != 1) {
+		SSLERR(ret, "Cannot init digest context: ");
+		goto out;
+	}
+
+	off = lseek(fdin, 0, SEEK_END);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	sz = (size_t)off;
+
+	entry.offset = fip->cursz;
+	/* Align size on 16k */
+	entry.size = ((sz - 0x60) + 0x3fff) & 0xffffc000;
+
+	off = lseek(fdin, 0x20, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	nr = gi_fip_read_blk(fdin, (uint8_t *)&entry.magic, sizeof(entry.magic));
+	if(nr <= 0) {
+		PERR("Cannot read DDRFW magic\n");
+		ret = -errno;
+		goto out;
+	}
+
+	off = lseek(fdin, 0x30, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	nr = gi_fip_read_blk(fdin, (uint8_t *)&entry.props, sizeof(entry.props));
+	if(nr <= 0) {
+		PERR("Cannot read DDRFW properties\n");
+		ret = -errno;
+		goto out;
+	}
+
+	off = lseek(fdin, 0x60, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	for(i = 0; i < (sz - 0x60); i += nr) {
+		nr = gi_fip_read_blk(fdin, tmp, sizeof(tmp));
+		if(nr < 0) {
+			PERR("Cannot read fd %d:", fdin);
+			ret = (int)nr;
+			goto out;
+		}
+		ret = EVP_DigestUpdate(ctx, tmp, nr);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot hash data block: ");
+			goto out;
+		}
+	}
+
+	/* Add potential padding to digest aswell */
+	while (i < entry.size) {
+		memset(tmp, 0, sizeof(tmp));
+		nr = MIN(entry.size - i, sizeof(tmp));
+
+		ret = EVP_DigestUpdate(ctx, tmp, nr);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot hash data block: ");
+			goto out;
+		}
+
+		i += nr;
+	}
+
+	ret = EVP_DigestFinal_ex(ctx, (uint8_t *)&entry.hash, NULL);
+	if(ret != 1) {
+		SSLERR(ret, "Cannot finalize hash: ");
+		goto out;
+	}
+
+	off = lseek(fip->fd, FTE_DDRFW_OFF(index), SEEK_SET);
+		if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+	nr = gi_fip_write_blk(fip->fd, (uint8_t *)&entry, sizeof(entry));
+	if(nr < 0) {
+		PERR("Cannot write DDRFW entry\n");
+		ret = -errno;
+		goto out;
+	}
+
+	off = lseek(fdin, 0x60, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	gi_fip_dump_img(fdin, fdout, bl2sz + entry.offset);
+	fip->cursz += entry.size;
+
+	ret = 0;
+
+out:
+	return ret;
+}
+
+/**
+ * Calculate final FIP toc hash
+ *
+ * @param fip: Fip handler
+ */
+static int gi_fip_v3_fini(int fipfd)
+{
+	EVP_MD_CTX *ctx;
+	uint8_t tmp[1024];
+	uint8_t hash[SHA2_SZ];
+	size_t i;
+	ssize_t nr;
+	off_t off;
+	int ret;
+
+	ctx = EVP_MD_CTX_new();
+	if(ctx == NULL) {
+		SSLERR(ret, "Cannot create digest context: ");
+		goto out;
+	}
+
+	ret = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+	if(ret != 1) {
+		SSLERR(ret, "Cannot init digest context: ");
+		goto out;
+	}
+
+	off = lseek(fipfd, TOC_OFFSET_V3, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	/* SHA256 is from 0x10 to (FIP_SZ - 0x40) */
+	for(i = 0; i < (FIP_SZ - (2 * SHA2_SZ)); i += nr) {
+		nr = gi_fip_read_blk(fipfd, tmp, sizeof(tmp));
+		if(nr < 0) {
+			PERR("Cannot read fd %d:", fipfd);
+			ret = (int)nr;
+			goto out;
+		}
+		ret = EVP_DigestUpdate(ctx, tmp, nr);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot hash data block: ");
+			goto out;
+		}
+	}
+
+	ret = EVP_DigestFinal_ex(ctx, hash, NULL);
+	if(ret != 1) {
+		SSLERR(ret, "Cannot finalize hash: ");
+		goto out;
+	}
+
+	off = lseek(fipfd, (FIP_SZ - SHA2_SZ), SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	ret = gi_fip_write_blk(fipfd, hash, sizeof(hash));
+	if (ret < 0)
+		goto out;
+	ret = 0;
+
+	off = lseek(fipfd, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+out:
+	EVP_MD_CTX_free(ctx);
 	return ret;
 }
 
@@ -607,11 +1073,14 @@ out:
  * @param bl33: BL33 boot image to add
  * @return: 0 on success, negative number otherwise
  */
-int gi_fip_create(char const *bl2, char const *bl30, char const *bl301,
-		char const *bl31, char const *bl33, char const *fout)
+int gi_fip_create(char const *bl2, char const **ddrfw,
+		unsigned int ddrfw_count, char const *bl30, char const *bl301,
+		char const *bl31, char const *bl33, char const *fout,
+		char const *revc)
 {
 	struct fip fip;
 	struct amlcblk acb;
+	enum fip_rev rev = GI_FIP_V2;
 	struct {
 		char const *path;
 		enum FIP_BOOT_IMG type;
@@ -628,6 +1097,11 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl301,
 			.path = bl31,
 			.type = FBI_BL31,
 		},
+		/* BL32 entry, even empty is required needed for V3 */
+		{
+			.path = NULL,
+			.type = FBI_BL32,
+		},
 		{
 			.path = bl33,
 			.type = FBI_BL33,
@@ -637,10 +1111,20 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl301,
 	off_t off;
 	int fdin = -1, fdout = -1, tmpfd = -1, ret;
 	char fippath[] = "/tmp/fip.enc.XXXXXX";
+	off_t bl2sz;
+
+	if (revc && !strcmp(revc, "v3")) {
+		DBG("Creating a v3 FIP\n");
+		rev = GI_FIP_V3;
+
+		if (ddrfw_count > 0)
+			DBG("Adding %d DDR firmwares in %s\n",
+				ddrfw_count, fout);
+	}
 
 	DBG("Create FIP final image in %s\n", fout);
 
-	ret = fip_init(&fip);
+	ret = fip_init(&fip, rev);
 	if(ret < 0)
 		goto exit;
 
@@ -662,48 +1146,122 @@ int gi_fip_create(char const *bl2, char const *bl30, char const *bl301,
 		goto out;
 	}
 
-	ret = gi_fip_dump_img(fdin, fdout, 0);
-	if(ret < 0)
-		goto out;
-
-	/* Add all BL3* images */
-	for(i = 0; i < ARRAY_SIZE(fip_bin_path); ++i) {
-		if(!fip_bin_path[i].path)
-			continue;
-		close(fdin);
-		fdin = open(fip_bin_path[i].path, O_RDONLY);
-		if(fdin < 0) {
-			PERR("Cannot open bl %s: ", fip_bin_path[i].path);
-			ret = -errno;
-			goto out;
-		}
-		ret = gi_fip_add(&fip, fdout, fdin, fip_bin_path[i].type);
-		if(ret < 0)
-			goto out;
-	}
-
-	tmpfd = gi_fip_create_tmp(fippath);
-	if(tmpfd < 0)
-		goto out;
-
-	ret = gi_amlcblk_init(&acb, fip.fd);
-	if(ret < 0)
-		goto out;
-
-	ret = gi_amlcblk_aes_enc(&acb, tmpfd, fip.fd);
-	if(ret < 0)
-		goto out;
-
-	ret = gi_amlcblk_dump_hdr(&acb, tmpfd);
-	if(ret < 0)
-		goto out;
-
-	off = lseek(tmpfd, 0, SEEK_SET);
+	off = lseek(fdin, 0, SEEK_END);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
 	}
-	ret = gi_fip_dump_img(tmpfd, fdout, BL2SZ);
+
+	if (rev == GI_FIP_V2 && off != BL2SZ) {
+		PERR("Invalid bl2 size %lx", off);
+		ret = -EINVAL;
+		goto out;
+	}
+	bl2sz = off;
+
+	off = lseek(fdin, 0, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		goto out;
+	}
+
+	ret = gi_fip_dump_img(fdin, fdout, 0);
+	if(ret < 0)
+		goto out;
+
+	/* Add the DDR firmwares entries */
+	if (rev == GI_FIP_V3 && ddrfw_count) {
+		ret = gi_fip_ddrfw_init(&fip, ddrfw_count);
+		if (ret < 0)
+			goto out;
+
+		for (i = 0; i < ddrfw_count; ++i) {
+			close(fdin);
+			fdin = open(ddrfw[i], O_RDONLY);
+			if(fdin < 0) {
+				PERR("Cannot open bl %s: ", ddrfw[i]);
+				ret = -errno;
+				goto out;
+			}
+			ret = gi_fip_ddrfw_add(&fip, fdout, fdin, i, bl2sz);
+			if (ret < 0)
+				goto out;
+		}
+	}
+
+	/* Add all BL3* images */
+	for(i = 0; i < ARRAY_SIZE(fip_bin_path); ++i) {
+		/* FBI_BL301 is no more for V3 */
+		if (rev == GI_FIP_V3 && fip_bin_path[i].type == FBI_BL301)
+			continue;
+		/* Do not add entry if missing on V2 */
+		if (rev == GI_FIP_V2 && !fip_bin_path[i].path)
+			continue;
+		if (fdin >= 0)
+			close(fdin);
+		if(fip_bin_path[i].path) {
+			fdin = open(fip_bin_path[i].path, O_RDONLY);
+			if(fdin < 0) {
+				PERR("Cannot open bl %s: ",
+					fip_bin_path[i].path);
+				ret = -errno;
+				goto out;
+			}
+		} else
+			fdin = -1;
+		ret = gi_fip_add(&fip, fdout, fdin, fip_bin_path[i].type,
+					rev, bl2sz);
+		if(ret < 0)
+			goto out;
+	}
+
+	/* Add the Image DATA entries, even if the image still boots without */
+	if (rev == GI_FIP_V3) {
+		static enum FIP_BOOT_IMG const data_list[] = {
+			FBI_BL2_DATA,
+			FBI_BL30_DATA,
+			FBI_BL31_DATA,
+			FBI_BL32_DATA,
+			FBI_BL33_DATA
+		};
+
+		for(i = 0; i < ARRAY_SIZE(data_list); ++i) {
+			ret = gi_fip_data_add(&fip, data_list[i], i);
+			if (ret < 0)
+				goto out;
+		}
+	}
+
+	if (rev == GI_FIP_V2) {
+		tmpfd = gi_fip_create_tmp(fippath);
+		if(tmpfd < 0)
+			goto out;
+
+		ret = gi_amlcblk_init(&acb, fip.fd);
+		if(ret < 0)
+			goto out;
+
+		ret = gi_amlcblk_aes_enc(&acb, tmpfd, fip.fd);
+		if(ret < 0)
+			goto out;
+
+		ret = gi_amlcblk_dump_hdr(&acb, tmpfd);
+		if(ret < 0)
+			goto out;
+
+		off = lseek(tmpfd, 0, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+		ret = gi_fip_dump_img(tmpfd, fdout, BL2SZ);
+	} else {
+		ret = gi_fip_v3_fini(fip.fd);
+		if(ret < 0)
+			goto out;
+
+		ret = gi_fip_dump_img(fip.fd, fdout, bl2sz);
+	}
 out:
 	if(tmpfd >= 0) {
 		close(tmpfd);
