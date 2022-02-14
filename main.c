@@ -112,6 +112,7 @@ struct gi_opt {
 };
 #define GI_OPT_INIT(go) do						\
 {									\
+	bzero(go, sizeof(*go));						\
 	(go)->act = GA_INVAL;						\
 } while(0)
 

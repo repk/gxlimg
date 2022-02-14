@@ -440,7 +440,7 @@ out:
 
 int gi_bl2_unsign_img(char const *fin, char const *fout)
 {
-	struct bl2 bl2;
+	struct bl2 bl2 = {};
 	ssize_t rd, wr;
 	size_t len;
 	off_t off;
