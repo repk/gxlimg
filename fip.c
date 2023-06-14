@@ -1413,6 +1413,137 @@ out:
 }
 
 /**
+ * Extract DDR firmware binaries from an Amlogic bootable image.
+ *
+ * @param fd: Amlogic bootable image
+ * @param dir: Output directory
+ * @param bl2sz: BL2 Size
+ * @return: 0 on success, negative number otherwise
+ */
+static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
+{
+	uint8_t *tmp, hash[SHA2_SZ] = { 0 };
+	struct fip_ddrfw_toc_entry tocentry;
+	struct fip_ddrfw_toc_header tochdr;
+	int ddr_fw_fd = -1, ret;
+	ssize_t off, nr, size;
+	char path[PATH_MAX];
+	EVP_MD_CTX *ctx;
+	unsigned int i;
+
+	off = lseek(fd, bl2sz + DDRFW_OFF, SEEK_SET);
+	if(off < 0) {
+		SEEK_ERR(off, ret);
+		return ret;
+	}
+
+	ret = gi_fip_read_blk(fd, (uint8_t *)&tochdr, sizeof(tochdr));
+	if(ret < 0) {
+		PERR("Cannot read DDR firmware header\n");
+		return -errno;
+	}
+
+	if(le32toh(tochdr.magic) != DDRFW_MAGIC) {
+		ERR("Invalid DDR firmware magic\n");
+		return -EINVAL;
+	}
+
+	ctx = EVP_MD_CTX_new();
+	if(ctx == NULL) {
+		SSLERR(ret, "Cannot create digest context: ");
+		return ret;
+	}
+
+	for(i = 0; i < tochdr.count; i++) {
+		ret = snprintf(path, sizeof(path) - 1, "%s/ddrfw_%u.bin", dir, i);
+		if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+			ERR("Filename too long");
+			ret = -EINVAL;
+			goto out;
+		}
+
+		ddr_fw_fd = open(path, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+		if(ddr_fw_fd < 0) {
+			PERR("Cannot open file %s", path);
+			ret = -errno;
+			goto out;
+		}
+
+		ret = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot init digest context: ");
+			goto out;
+		}
+
+		off = lseek(fd, bl2sz + FTE_DDRFW_OFF(i), SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+
+		ret = gi_fip_read_blk(fd, (uint8_t *)&tocentry, sizeof(tocentry));
+		if(ret < 0) {
+			ERR("Cannot read DDR firmware entry header\n");
+			goto out;
+		}
+
+		size = sizeof(tocentry) + tocentry.size;
+		tmp = malloc(size);
+		if (tmp == NULL) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		off = lseek(fd, bl2sz + tocentry.offset, SEEK_SET);
+		if(off < 0) {
+			SEEK_ERR(off, ret);
+			goto out;
+		}
+
+		memcpy(tmp, &tocentry, sizeof(tocentry));
+
+		ret = gi_fip_read_blk(fd, tmp + sizeof(tocentry), tocentry.size);
+		if(ret < 0) {
+			ERR("Cannot read DDR firmware data\n");
+			goto out;
+		}
+
+		ret = EVP_DigestUpdate(ctx, tmp, size);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot hash DDR firmware header and data: ");
+			goto out;
+		}
+
+		ret = EVP_DigestFinal_ex(ctx, hash, NULL);
+		if(ret != 1) {
+			SSLERR(ret, "Cannot finalize DDR firmware and header hash: ");
+			goto out;
+		}
+
+		nr = gi_fip_write_blk(ddr_fw_fd, hash, sizeof(hash));
+		if(nr < 0) {
+			PERR("Cannot write DDR firmware sha256 checksum");
+			ret = -errno;
+			goto out;
+		}
+
+		ret = gi_fip_write_blk(ddr_fw_fd, tmp, size);
+		if(ret < 0) {
+			ERR("Cannot write extracted DDR firmware data\n");
+			goto out;
+		}
+
+		close(ddr_fw_fd);
+		ddr_fw_fd = -1;
+	}
+
+out:
+	if(ddr_fw_fd >= 0)
+		close(ddr_fw_fd);
+	return ret;
+}
+
+/**
  * Extract bl3x binaries from an Amlogic bootable image
  *
  * @param toc: FIP ToC infos
@@ -1605,6 +1736,12 @@ int gi_fip_extract(char const *fip, char const *dir)
 		goto out;
 
 	ret = gi_fip_extract_bl3x(&toc, fdin, dir, bl2sz);
+	if(ret < 0)
+		goto out;
+
+	if (rev == GI_FIP_V3)
+		ret = gi_fip_extract_ddrfw(fdin, dir, bl2sz);
+
 out:
 	if(fdin >= 0)
 		close(fdin);
