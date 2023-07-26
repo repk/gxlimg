@@ -895,7 +895,7 @@ static int gi_fip_ddrfw_add(struct fip *fip, int fdout, int fdin,
 	/* Align size on 16k */
 	entry.size = ((sz - 0x60) + 0x3fff) & 0xffffc000;
 
-	off = lseek(fdin, 0x20, SEEK_SET);
+	off = lseek(fdin, SHA2_SZ, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
