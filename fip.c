@@ -1422,12 +1422,12 @@ out:
  */
 static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
 {
-	uint8_t *tmp, hash[SHA2_SZ] = { 0 };
+	uint8_t *tmp, *fw_identifier, hash[SHA2_SZ] = { 0 };
 	struct fip_ddrfw_toc_entry tocentry;
 	struct fip_ddrfw_toc_header tochdr;
+	char path[PATH_MAX], fw_name[32];
 	int ddr_fw_fd = -1, ret;
 	ssize_t off, nr, size;
-	char path[PATH_MAX];
 	EVP_MD_CTX *ctx;
 	unsigned int i;
 
@@ -1455,20 +1455,6 @@ static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
 	}
 
 	for(i = 0; i < tochdr.count; i++) {
-		ret = snprintf(path, sizeof(path) - 1, "%s/ddrfw_%u.bin", dir, i);
-		if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
-			ERR("Filename too long");
-			ret = -EINVAL;
-			goto out;
-		}
-
-		ddr_fw_fd = open(path, O_RDWR | O_CREAT, FOUT_MODE_DFT);
-		if(ddr_fw_fd < 0) {
-			PERR("Cannot open file %s", path);
-			ret = -errno;
-			goto out;
-		}
-
 		ret = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
 		if(ret != 1) {
 			SSLERR(ret, "Cannot init digest context: ");
@@ -1489,7 +1475,7 @@ static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
 
 		size = sizeof(tocentry) + tocentry.size;
 		tmp = malloc(size);
-		if (tmp == NULL) {
+		if(tmp == NULL) {
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -1517,6 +1503,43 @@ static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
 		ret = EVP_DigestFinal_ex(ctx, hash, NULL);
 		if(ret != 1) {
 			SSLERR(ret, "Cannot finalize DDR firmware and header hash: ");
+			goto out;
+		}
+
+		fw_identifier = tocentry.props + sizeof(uint32_t);
+
+		if(!memcmp(fw_identifier, "d444", 4))
+			strcpy(fw_name, "ddr4_1d.fw");
+		else if(!memcmp(fw_identifier, "d422", 4))
+			strcpy(fw_name, "ddr4_2d.fw");
+		else if(!memcmp(fw_identifier, "d333", 4))
+			strcpy(fw_name, "ddr3_1d.fw");
+		else if(!memcmp(fw_identifier, "eaea", 4))
+			strcpy(fw_name, "piei.fw");
+		else if(!memcmp(fw_identifier, "dl44", 4))
+			strcpy(fw_name, "lpddr4_1d.fw");
+		else if(!memcmp(fw_identifier, "dl40", 4))
+			strcpy(fw_name, "lpddr4_2d.fw");
+		else if(!memcmp(fw_identifier, "ddg1", 4))
+			strcpy(fw_name, "diag_lpddr4.fw");
+		else if(!memcmp(fw_identifier, "AML0", 4))
+			strcpy(fw_name, "aml_ddr.fw");
+		else if(!memcmp(fw_identifier, "dl33", 4))
+			strcpy(fw_name, "lpddr3_1d.fw");
+		else
+			snprintf(fw_name, sizeof(fw_name), "ddrfw_%u.bin", i);
+
+		ret = snprintf(path, sizeof(path) - 1, "%s/%s", dir, fw_name);
+		if((ret < 0) || (ret > (int)(sizeof(path) - 1))) {
+			ERR("Filename too long");
+			ret = -EINVAL;
+			goto out;
+		}
+
+		ddr_fw_fd = open(path, O_RDWR | O_CREAT, FOUT_MODE_DFT);
+		if(ddr_fw_fd < 0) {
+			PERR("Cannot open file %s", path);
+			ret = -errno;
 			goto out;
 		}
 
