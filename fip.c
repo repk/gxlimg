@@ -1637,6 +1637,7 @@ static int gi_fip_extract_bl3x(struct fip_toc_info const *toc, int fdin,
 		close(binfd);
 		binfd=-1;
 	}
+	ret = 0;
 
 out:
 	if(binfd >= 0)
