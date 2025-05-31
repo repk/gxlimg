@@ -1559,6 +1559,7 @@ static int gi_fip_extract_ddrfw(int fd, char const *dir, int bl2sz)
 		close(ddr_fw_fd);
 		ddr_fw_fd = -1;
 	}
+	ret = 0;
 
 out:
 	if(ddr_fw_fd >= 0)
