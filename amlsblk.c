@@ -128,7 +128,7 @@ int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 {
 	uint8_t key_hdr[BL3xKEYHDR_SZ] = { 0 };
 	uint8_t empty_nonce[BL3xIV_SZ] = { 0 };
-	uint8_t block[512];
+	uint8_t *buffer = NULL;
 	ssize_t rd, wr;
 	off_t off;
 	size_t nr;
@@ -189,17 +189,22 @@ int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 		}
 	}
 
+	ret = -ENOMEM;
+	buffer = malloc(asb->blksz + asb->topad);
+	if(buffer == NULL)
+		goto out;
+
 	for(nr = 0; nr < asb->hashsz; nr += rd) {
-		rd = gi_amlsblk_read_blk(fin, block, sizeof(block));
+		rd = gi_amlsblk_read_blk(fin, buffer, asb->blksz);
 		if(rd <= 0) {
 			ret = (int)rd;
 			goto out;
 		}
 		if((size_t)rd < asb->blksz) {
-			memset(block + rd, 0, asb->blksz - rd);
+			memset(buffer + rd, 0, asb->blksz + asb->topad - rd);
 			rd += asb->topad;
 		}
-		wr = gi_amlsblk_write_blk(fout, block, rd);
+		wr = gi_amlsblk_write_blk(fout, buffer, rd);
 		if(wr != rd) {
 			ret = (int)wr;
 			goto out;
@@ -208,6 +213,7 @@ int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 
 	ret = 0;
 out:
+	free(buffer);
 	return ret;
 }
 
@@ -241,7 +247,7 @@ int gi_amlsblk_build_header(struct amlsblk *asb)
  */
 int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 {
-	uint8_t *block = NULL;
+	uint8_t *buffer = NULL;
 	EVP_MD_CTX *ctx;
 	ssize_t nr;
 	off_t off;
@@ -255,8 +261,8 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 	}
 
 	ret = -ENOMEM;
-	block = malloc(asb->blksz);
-	if(block == NULL)
+	buffer = malloc(asb->blksz + asb->topad);
+	if(buffer == NULL)
 		goto out;
 
 	ret = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
@@ -280,7 +286,7 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 	}
 
 	for(i = 0; i < asb->hashsz; i += nr) {
-		nr = gi_amlsblk_read_blk(fin, block, asb->blksz);
+		nr = gi_amlsblk_read_blk(fin, buffer, asb->blksz);
 		if(nr < 0) {
 			PERR("Cannot read fd %d:", fin);
 			ret = (int)nr;
@@ -288,11 +294,11 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 		}
 
 		if((size_t)nr < asb->blksz) {
-			memset(block + nr, 0, asb->blksz - nr);
+			memset(buffer + nr, 0, asb->blksz + asb->topad - nr);
 			nr += asb->topad;
 		}
 
-		ret = EVP_DigestUpdate(ctx, block, nr);
+		ret = EVP_DigestUpdate(ctx, buffer, nr);
 		if(ret != 1) {
 			SSLERR(ret, "Cannot hash data block: ");
 			goto out;
@@ -307,7 +313,7 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 	ret = 0;
 out:
 	EVP_MD_CTX_free(ctx);
-	free(block);
+	free(buffer);
 	return ret;
 }
 
