@@ -191,13 +191,16 @@ int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 
 	for(nr = 0; nr < asb->hashsz; nr += rd) {
 		rd = gi_amlsblk_read_blk(fin, block, sizeof(block));
-		if(rd <= 0) {
+		if(rd < 0) {
 			ret = (int)rd;
 			goto out;
 		}
 		if((size_t)rd < asb->blksz) {
 			memset(block + rd, 0, asb->blksz - rd);
-			rd += asb->topad;
+			rd = asb->hashsz - nr;
+			if((size_t)rd > asb->blksz) {
+				rd = asb->blksz;
+			}
 		}
 		wr = gi_amlsblk_write_blk(fout, block, rd);
 		if(wr != rd) {
@@ -289,7 +292,10 @@ int gi_amlsblk_hash_payload(struct amlsblk *asb, int fin)
 
 		if((size_t)nr < asb->blksz) {
 			memset(block + nr, 0, asb->blksz - nr);
-			nr += asb->topad;
+			nr = asb->hashsz - i;
+			if((size_t)nr > asb->blksz) {
+				nr = asb->blksz;
+			}
 		}
 
 		ret = EVP_DigestUpdate(ctx, block, nr);
