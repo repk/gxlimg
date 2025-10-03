@@ -16,7 +16,6 @@ struct amlsblk {
 	size_t blksz;
 	size_t totsz;
 	size_t hashsz;
-	size_t topad;
 	uint8_t flag;
 	uint8_t hash[BL3xSHA2_SZ];
 	uint8_t hdr_hash[BL3xSHA2_SZ];
