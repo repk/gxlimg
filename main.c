@@ -377,6 +377,7 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.flag = NULL,
 			.val = '5',
 		},
+		{},
 	};
 	struct gi_blopt blopt;
 	struct gi_fipopt fipopt;
