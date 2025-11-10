@@ -138,6 +138,17 @@ static int gi_bl2_dump_hdr(struct bl2 const *bl2, int fd)
 	ret = gi_random(rd, BL2IV_SZ);
 	if(ret < 0)
 		goto out;
+#ifdef REPRODUCIBLE
+	/* If SOURCE_DATE_EPOCH is set, replace the random IV with a reproducible
+	   string */
+	if (getenv("SOURCE_DATE_EPOCH")) {
+		memset(rd, 0, BL2IV_SZ);
+		/* SOURCE_DATE_EPOCH is a UNIX epoch in base-10 and is currently 10
+		   chars long. It will no longer fit here after 2286-11-20T17:46:40 UTC
+		 */
+		snprintf((char *)rd, BL2IV_SZ, "SDE=%s\n", getenv("SOURCE_DATE_EPOCH"));
+	}
+#endif
 
 	off = lseek(fd, 0, SEEK_SET);
 	if(off < 0) {

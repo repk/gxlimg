@@ -14,6 +14,10 @@ ifeq ($(DEBUG), 1)
 	CFLAGS += -DDEBUG=1 -g -O0
 endif
 
+ifeq ($(REPRODUCIBLE), 1)
+	CFLAGS += -DREPRODUCIBLE=1
+endif
+
 define rm-file
 	@(rm $(1) 2>/dev/null && \
 		echo "rm $(1)") || true

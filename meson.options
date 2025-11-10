@@ -1,0 +1,1 @@
+option('reproducible', type : 'boolean', value : false, description : 'Use SOURCE_DATE_EPOCH environment variable to produce reproducible output')
