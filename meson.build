@@ -1,4 +1,4 @@
-project('gxlimg', 'c', default_options: ['buildtype=debugoptimized', 'c_std=gnu99'])
+project('gxlimg', 'c', default_options: ['buildtype=debugoptimized', 'c_std=gnu99'], meson_version : '>= 1.1')
 
 deps = [dependency('libssl'), dependency('libcrypto')]
 srcs = ['amlcblk.c', 'amlsblk.c', 'bl2.c', 'bl3.c', 'fip.c', 'main.c']
@@ -7,6 +7,10 @@ add_project_arguments('-D_GNU_SOURCE', language: 'c')
 
 if get_option('buildtype') == 'debug'
     add_project_arguments('-DDEBUG=1', language: 'c')
+endif
+
+if get_option('reproducible')
+    add_project_arguments('-DREPRODUCIBLE=1', language: 'c')
 endif
 
 executable('gxlimg', srcs, dependencies : deps, install : true)
