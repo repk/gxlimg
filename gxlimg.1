@@ -1,0 +1,85 @@
+.TH GXLIMG "1" "April 2026" "gxlimg 0.0.1" "User Commands"
+.SH NAME
+gxlimg \- amlogic s905x boot image creation tool
+.SH SYNOPSIS
+.B
+gxlimg
+.RI [OPTION]
+.I <fin> <fout>
+.br
+.B gxlimg
+.I \fB\-t\fR fip
+.RI [OPTION]
+.I <fout>
+.
+.SH DESCRIPTION
+Gxlimg is an amlogic s905x boot image creation tools. This has been made by
+reverse engineering the aml_encrypt_gxl binary used to create boot image as
+well as the BL2 arm binary that reads FIP header and loads BL3* and u-boot
+images.
+.
+.SH OPTIONS
+.HP
+\fB\-t\fR, \fB\-\-type\fR
+.IP
+type of <fin> file (bl2 or bl30 or bl3x or fip)
+.IP
+.SS "bl2 and bl3x options"
+.HP
+\fB\-e\fR, \fB\-\-extract\fR
+.IP
+extract the different binary images from <fin> boot image
+and store them in fout directory
+.HP
+\fB\-s\fR, \fB\-\-sign\fR
+.IP
+sign a boot image from <fin> binary image
+.HP
+\fB\-u\fR, \fB\-\-unsign\fR
+.IP
+get a boot image from <fin> signed binary image
+.HP
+\fB\-c\fR, \fB\-\-encrypt\fR
+.IP
+create and encrypt a bl boot image from <fin> binary image
+.HP
+\fB\-d\fR, \fB\-\-decrypt\fR
+.IP
+decrypt a bl boot image from <fin> store it in <fout>
+.IP
+.SS "fip options"
+.HP
+\fB\-\-bl2\fR
+.IP
+BL2 boot file to add in final boot image
+.HP
+\fB\-\-ddrfw\fR
+.IP
+DDR Firmware(s) file(s) to add in final boot image
+.HP
+\fB\-\-bl30\fR
+.IP
+BL30 boot file to add in final boot image
+.HP
+\fB\-\-bl301\fR
+.IP
+BL301 optional boot file to add in final boot image
+.HP
+\fB\-\-bl31\fR
+.IP
+BL31 boot file to add in final boot image
+.HP
+\fB\-\-bl33\fR
+.IP
+BL31 boot file to add in final boot image
+.HP
+\fB\-\-rev\fR
+.IP
+FIP format revision (v2 or v3)
+.
+.SH AUTHOR
+gxlimg was written by Remi Pommarel
+.I <repk@triplefau.lt>
+.
+.SH BUGS
+https://github.com/repk/gxlimg/issues
