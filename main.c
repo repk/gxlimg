@@ -300,6 +300,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 {
 	struct option opt[] = {
 		{
+			.name = "help",
+			.has_arg = 0,
+			.flag = NULL,
+			.val = 'h',
+		},
+		{
 			.name = "type",
 			.has_arg = 1,
 			.flag = NULL,
@@ -390,8 +396,11 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	GI_FIPOPT_INIT(&fipopt);
 	GI_EXTOPT_INIT(&extopt);
 
-	while((ret = getopt_long(argc, argv, "ecdsut:", opt, &idx)) != -1) {
+	while((ret = getopt_long(argc, argv, "hecdsut:", opt, &idx)) != -1) {
 		switch(ret) {
+		case 'h':
+			USAGE(argc, argv);
+			exit(0);
 		case 't':
 			if(strcmp(optarg, "bl2") == 0) {
 				blopt.type = GT_BL2;
