@@ -14,3 +14,8 @@ if get_option('reproducible')
 endif
 
 executable('gxlimg', srcs, dependencies : deps, install : true)
+
+install_data(
+    'gxlimg.1',
+    install_dir: get_option('mandir') / 'man1'
+)
