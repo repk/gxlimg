@@ -20,6 +20,8 @@
 #define BL31_ENTRY_MAGIC (0x87654321)
 #define BL31_MAGIC (0x12348765)
 #define AMLSBLK_KEY_MAGIC	(*(uint32_t *)"@KEY")
+#define AMLSBLK_BL3X_MAGIC	(*(uint64_t *)"BL3X-HDR")
+#define BL3xOUTHDR_SZ (0x100)
 #define BL2SZ (0xc000)
 #define TOC_OFFSET_V3 (0x10)
 
@@ -607,6 +609,22 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 				goto out;
 			}
 
+			nr = gi_fip_read_blk(fdin, buf, 8);
+			if(nr <= 0) {
+				PERR("Cannot read BL image entry\n");
+				ret = -errno;
+				goto out;
+			}
+
+			if (le64toh(*(uint64_t *)buf) == AMLSBLK_BL3X_MAGIC)
+				skip = BL3xOUTHDR_SZ;
+
+			off = lseek(fdin, skip, SEEK_SET);
+			if(off < 0) {
+				SEEK_ERR(off, ret);
+				goto out;
+			}
+
 			nr = gi_fip_read_blk(fdin, buf, 4);
 			if(nr <= 0) {
 				PERR("Cannot read BL image entry\n");
@@ -614,10 +632,19 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 				goto out;
 			}
 
-			if (le32toh(*(uint32_t *)buf) == AMLSBLK_KEY_MAGIC) {
-				skip = 0x490;
+			if (le32toh(*(uint32_t *)buf) == AMLSBLK_KEY_MAGIC)
+				skip += 0x490;
+
+			/*
+			 * BL30 is signed twice: the outer bl3x signature block
+			 * is not part of the loaded payload, skip it as well,
+			 * like aml_encrypt does.
+			 */
+			if (type == FBI_BL30 && skip)
+				skip += 0x290;
+
+			if (skip)
 				sz -= skip;
-			}
 		}
 	} else
 		sz = 0;
@@ -696,7 +723,16 @@ static int gi_fip_add(struct fip *fip, int fdout, int fdin,
 		goto out;
 	}
 	gi_fip_dump_img(fdin, fdout, bl2sz + entry.offset);
-	fip->cursz += ROUNDUP(sz, 0x4000);
+	/*
+	 * aml_encrypt packs BL3x images tightly: the TOC size is the exact
+	 * payload size and the next image follows immediately. Rounding the
+	 * size up makes the TOC size cover padding bytes, which breaks the
+	 * payload hash verification done by the boot ROM on G12A.
+	 */
+	if (rev == GI_FIP_V3 && skip)
+		fip->cursz += sz;
+	else
+		fip->cursz += ROUNDUP(sz, 0x4000);
 
 nofdin:
 	++fip->nrentries;
