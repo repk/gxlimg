@@ -2,6 +2,7 @@
 #define _AMLSBLK_H_
 
 #define IMGHDR_SZ	0x200
+#define BL3xOUTHDR_SZ	0x100
 #define BL3xIV_SZ	0x10
 #define BL3xSB_SZ	0x80
 #define BL3xSIG_SZ	0x200
@@ -20,6 +21,7 @@ struct amlsblk {
 	uint8_t hash[BL3xSHA2_SZ];
 	uint8_t hdr_hash[BL3xSHA2_SZ];
 	uint8_t hdr[BL3xHDR_SZ - BL3xIV_SZ - BL3xSHA2_SZ];
+	uint8_t imghdr[IMGHDR_SZ];
 };
 
 int gi_amlsblk_init(struct amlsblk *asb, int fd);

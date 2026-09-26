@@ -27,6 +27,7 @@
 
 #define AMLSBLK_MAGIC		(*(uint32_t *)"@AML")
 #define AMLSBLK_KEY_MAGIC	(*(uint32_t *)"@KEY")
+#define AMLSBLK_BL3X_MAGIC	(*(uint64_t *)"BL3X-HDR")
 
 /**
  * Read a block of data from a file
@@ -126,11 +127,13 @@ out:
  */
 int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 {
+	uint8_t out_hdr[BL3xOUTHDR_SZ] = { 0 };
 	uint8_t key_hdr[BL3xKEYHDR_SZ] = { 0 };
 	uint8_t empty_nonce[BL3xIV_SZ] = { 0 };
 	uint8_t block[512];
 	ssize_t rd, wr;
 	off_t off;
+	off_t seek = 0x490;
 	size_t nr;
 	int ret;
 
@@ -145,13 +148,36 @@ int gi_amlsblk_flush_data(struct amlsblk *asb, int fin, int fout)
 		goto out;
 	}
 
+	/*
+	 * When the input image starts with the BL31 magic, it carries an
+	 * image header that must be preserved: prepend a BL3X-HDR block
+	 * built from it, like aml_encrypt does.
+	 */
+	if(AMLSBLK_HAS_HDR(asb)) {
+		bh_wr(out_hdr, 64, 0x0,  AMLSBLK_BL3X_MAGIC);
+		bh_wr(out_hdr, 32, 0xc,  BL3xOUTHDR_SZ);
+		memcpy(out_hdr + 0x10, asb->imghdr + 0x08, 0x10);
+		memcpy(out_hdr + 0x20, asb->imghdr + 0x20, 4);
+		memcpy(out_hdr + 0x28, asb->imghdr + 0x18, 4);
+		memcpy(out_hdr + 0x2c, asb->imghdr + 0x28, 4);
+		memcpy(out_hdr + 0x30, asb->imghdr, 0x50);
+
+		ret = gi_amlsblk_write_blk(fout, out_hdr, sizeof(out_hdr));
+		if(ret < 0) {
+			PERR("Cannot write header in fd %d: ", fout);
+			goto out;
+		}
+
+		seek += BL3xOUTHDR_SZ;
+	}
+
 	ret = gi_amlsblk_write_blk(fout, key_hdr, sizeof(key_hdr));
 	if(ret < 0) {
 		PERR("Cannot write header in fd %d: ", fout);
 		goto out;
 	}
 
-	off = lseek(fout, 0x490, SEEK_SET);
+	off = lseek(fout, seek, SEEK_SET);
 	if(off < 0) {
 		SEEK_ERR(off, ret);
 		goto out;
@@ -326,7 +352,6 @@ out:
  */
 int gi_amlsblk_init(struct amlsblk *asb, int fd)
 {
-	uint8_t img_hdr[IMGHDR_SZ];
 	size_t nr;
 	off_t fsz;
 	int ret;
@@ -338,14 +363,14 @@ int gi_amlsblk_init(struct amlsblk *asb, int fd)
 		goto out;
 	}
 
-	nr = gi_amlsblk_read_blk(fd, img_hdr, sizeof(img_hdr));
-	if(nr != sizeof(img_hdr)) {
+	nr = gi_amlsblk_read_blk(fd, asb->imghdr, sizeof(asb->imghdr));
+	if(nr != sizeof(asb->imghdr)) {
 		PERR("Cannot read input header: ");
 		ret = -EINVAL;
 		goto out;
 	}
 
-	if(bh_rd(img_hdr, 32, 0) == BL31_MAGIC)
+	if(bh_rd(asb->imghdr, 32, 0) == BL31_MAGIC)
 		AMLSBLK_SET_HDR(asb);
 
 	asb->blksz = 0x200;
