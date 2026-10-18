@@ -45,12 +45,14 @@ struct gi_blopt {
 	enum gi_type type;
 	char const *fin;
 	char const *fout;
+	char const *compress;
 };
 #define GI_BLOPT_INIT(go) do						\
 {									\
 	(go)->type = GT_INVAL;						\
 	(go)->fin = NULL;						\
 	(go)->fout = NULL;						\
+	(go)->compress = NULL;					\
 } while(0)
 
 /**
@@ -150,6 +152,8 @@ static void usage(char const *progname)
 	ERR("\t\tget a boot image from <fin> signed binary image\n");
 	ERR("\t-c, --encrypt\n");
 	ERR("\t\tcreate and encrypt a bl boot image from <fin> binary image\n");
+	ERR("\t-z, --compress\n");
+	ERR("\t\tcompress payload before signing (supported: lz4)\n");
 	ERR("\t-d, --decrypt\n");
 	ERR("\t\tdecrypt a bl boot image from <fin> store it in <fout>\n");
 	ERR("\n\tfip options :\n");
@@ -186,7 +190,8 @@ static int gi_sign_img(struct gi_opt *gopt)
 		ret = gi_bl2_sign_img(gopt->blopt.fin, gopt->blopt.fout);
 		break;
 	case GT_BL3X:
-		ret = gi_bl3_sign_img(gopt->blopt.fin, gopt->blopt.fout);
+		ret = gi_bl3_sign_img(gopt->blopt.fin, gopt->blopt.fout,
+				gopt->blopt.compress);
 		break;
 	default:
 		break;
@@ -330,6 +335,12 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			.val = 'd',
 		},
 		{
+			.name = "compress",
+			.has_arg = 1,
+			.flag = NULL,
+			.val = 'z',
+		},
+		{
 			.name = "extract",
 			.has_arg = 0,
 			.flag = NULL,
@@ -390,7 +401,7 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 	GI_FIPOPT_INIT(&fipopt);
 	GI_EXTOPT_INIT(&extopt);
 
-	while((ret = getopt_long(argc, argv, "ecdsut:", opt, &idx)) != -1) {
+	while((ret = getopt_long(argc, argv, "ecdsut:z:", opt, &idx)) != -1) {
 		switch(ret) {
 		case 't':
 			if(strcmp(optarg, "bl2") == 0) {
@@ -418,6 +429,9 @@ static int parse_args(struct gi_opt *gopt, int argc, char *argv[])
 			break;
 		case 'd':
 			gopt->act = GA_BLDEC;
+			break;
+		case 'z':
+			blopt.compress = optarg;
 			break;
 		case 'e':
 			gopt->act = GA_EXTIMG;

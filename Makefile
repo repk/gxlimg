@@ -1,7 +1,7 @@
 CC := $(CROSS_COMPILE)gcc
 LD := $(CROSS_COMPILE)gcc
 CFLAGS ?= -W -Wall -std=gnu99 -D_GNU_SOURCE
-LDFLAGS ?= -lssl -lcrypto
+LDFLAGS ?= -lssl -lcrypto -llz4
 
 SRC := main.c bl2.c bl3.c amlcblk.c amlsblk.c fip.c
 OBJ := $(SRC:%.c=%.o)
