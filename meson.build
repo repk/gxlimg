@@ -1,6 +1,6 @@
 project('gxlimg', 'c', default_options: ['buildtype=debugoptimized', 'c_std=gnu99'], meson_version : '>= 1.1')
 
-deps = [dependency('libssl'), dependency('libcrypto')]
+deps = [dependency('libssl'), dependency('libcrypto'), dependency('liblz4')]
 srcs = ['amlcblk.c', 'amlsblk.c', 'bl2.c', 'bl3.c', 'fip.c', 'main.c']
 
 add_project_arguments('-D_GNU_SOURCE', language: 'c')
